@@ -230,6 +230,7 @@ async def execute_agent_turn(
 
     # Clear the previous turn's reference image to ensure a fresh generation by default
     session.state.pop("latest_input_image", None)
+    session.state.pop("latest_input_image_artifact", None)
 
     # Resolve image sequence threading via replies to image messages
     from bot.cache import get_image_metadata
@@ -239,6 +240,12 @@ async def execute_agent_turn(
         if ref_meta:
             artifact_name = ref_meta.get("image_artifact")
             if artifact_name:
+                parent_artifact = ref_meta.get("parent_image_artifact")
+                # If prompt refers to original/source/first/initial/seed, load parent artifact
+                prompt_lower = content.lower()
+                if parent_artifact and any(kw in prompt_lower for kw in ["original", "source", "first", "initial", "seed"]):
+                    logger.info("User requested original composition. Routing reference image to parent artifact: %s", parent_artifact)
+                    artifact_name = parent_artifact
                 try:
                     part = await artifact_service.load_artifact(
                         app_name=APP_NAME,
@@ -253,6 +260,7 @@ async def execute_agent_turn(
                             "data": img_b64,
                             "mime_type": part.inline_data.mime_type or "image/jpeg",
                         }
+                        session.state["latest_input_image_artifact"] = artifact_name
                         logger.info("Loaded reply reference image from artifact: %s", artifact_name)
                 except Exception as e:
                     logger.error("Failed to load reply reference image artifact %s: %s", artifact_name, e)
@@ -295,6 +303,20 @@ async def execute_agent_turn(
             "data": image_data["data"],
             "mime_type": image_data["mime_type"],
         }
+        # Save user uploaded image as an artifact so it can be referenced in edits
+        import hashlib
+        uploaded_key = f"user:uploaded_image_{hashlib.md5(image_data['data'].encode()).hexdigest()[:8]}.jpeg"
+        part = types.Part(
+            inline_data=types.Blob(mime_type=image_data["mime_type"], data=image_data["raw_bytes"])
+        )
+        await artifact_service.save_artifact(
+            app_name=APP_NAME,
+            user_id=user_id,
+            filename=uploaded_key,
+            session_id=session_id,
+            artifact=part
+        )
+        session.state["latest_input_image_artifact"] = uploaded_key
 
     # Build user preference context
     user_prefs = session.state.get("user_prefs", {})
@@ -410,6 +432,7 @@ async def execute_agent_turn(
             style=session.state.get("rolled_style") if session else None,
             resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
             image_artifact=new_image_key,
+            parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
         )
 
         # Send text response in an archived thread

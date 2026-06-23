@@ -138,7 +138,8 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
             ref_meta = await get_image_metadata(parent_msg_id)
             original_prompt = ""
             state_updates = {
-                "latest_input_image": None  # Clear by default
+                "latest_input_image": None,  # Clear by default
+                "latest_input_image_artifact": None,
             }
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
@@ -149,6 +150,12 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                 
                 image_artifact = ref_meta.get("image_artifact")
                 if image_artifact:
+                    parent_artifact = ref_meta.get("parent_image_artifact")
+                    # If edit prompt requests original composition, load parent artifact
+                    prompt_lower = self.prompt_input.value.lower()
+                    if parent_artifact and any(kw in prompt_lower for kw in ["original", "source", "first", "initial", "seed"]):
+                        logger.info("User requested original composition in edit modal. Routing to parent artifact: %s", parent_artifact)
+                        image_artifact = parent_artifact
                     try:
                         part = await self.artifact_service.load_artifact(
                             app_name="app",
@@ -162,6 +169,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                                 "data": img_b64,
                                 "mime_type": part.inline_data.mime_type or "image/jpeg",
                             }
+                            state_updates["latest_input_image_artifact"] = image_artifact
                             logger.info("Loaded reference image for edit from artifact: %s", image_artifact)
                     except Exception as e:
                         logger.error("Failed to load reference image artifact %s for edit: %s", image_artifact, e)
@@ -198,6 +206,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                     style=session.state.get("rolled_style") if session else None,
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,
+                    parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
                 )
             else:
                 await interaction.followup.send(response_text or "Failed to generate edited image.")
@@ -244,12 +253,14 @@ class ImageView(discord.ui.View):
                     "force_style_roll": False,
                     "start_fresh_image": True,
                     "latest_input_image": None,
+                    "latest_input_image_artifact": None,
                 })
             else:
                 await self.update_state_fn(self.user_id, self.session_id, {
                     "force_style_roll": False,
                     "start_fresh_image": True,
                     "latest_input_image": None,
+                    "latest_input_image_artifact": None,
                 })
 
             if original_prompt:
@@ -307,10 +318,11 @@ class ImageView(discord.ui.View):
                     "art_director_mode": "simple",
                     "start_fresh_image": False,
                     "latest_input_image": None,
+                    "latest_input_image_artifact": None,
                 })
             else:
                 await self.update_state_fn(self.user_id, self.session_id, {
-                    "force_style_roll": True, "art_director_mode": "simple", "start_fresh_image": False, "latest_input_image": None,
+                    "force_style_roll": True, "art_director_mode": "simple", "start_fresh_image": False, "latest_input_image": None, "latest_input_image_artifact": None,
                 })
 
             if original_prompt:
