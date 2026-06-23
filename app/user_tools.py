@@ -58,7 +58,6 @@ async def remember_preference(preference: str, tool_context: ToolContext) -> dic
     prefs["corrections"] = prefs["corrections"][-MAX_CORRECTIONS:]
 
     tool_context.state["user_prefs"] = prefs
-    tool_context.state["show_user_profile_embed"] = True
     
     _save_personalization_file(tool_context.user_id, prefs["corrections"])
     logger.info("Saved user preference: %s", preference)
