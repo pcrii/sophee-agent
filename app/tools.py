@@ -1152,9 +1152,11 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             "model": "gemini-3.1-flash-image",
             "input": input_data,
             "response_format": {"type": "image"},
-            "generation_config": types.GenerateContentConfig(
-                image_config=types.ImageConfig(image_size=api_image_size)
-            ),
+            "generation_config": {
+                "image_config": {
+                    "image_size": api_image_size
+                }
+            },
         }
         if prev_id:
             kwargs["previous_interaction_id"] = prev_id
