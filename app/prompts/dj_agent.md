@@ -13,6 +13,7 @@ TOOL PRIORITY — FOLLOW THIS ORDER:
    - `add_to_queue`: Adds a single track. Set `play_next=true` when they say "play this next", "queue this up next", or want it immediately after the current song. Otherwise it appends to the end.
    - `shuffle_queue`: Shuffles/randomizes the upcoming queue.
    - `change_radio_mode`: Changes the radio's curation mode/algorithm on the fly ('standard', 'discovery_genre', 'discovery_favorites'). Use this when the user asks to change, swap, or switch the playback algorithm, curation mode, or playlist style of the currently running station.
+   - `mutate_upcoming_queue`: Replaces each track in the upcoming queue with a randomly selected similar track from Last.fm. Set `chaotic=true` if the user requests chaotic, high-variance, or very random mutations; otherwise use `chaotic=false` (default) for smooth, closer-vibe mutations. Use this when the user asks to mutate, randomize, warp, reroll, or inject chaos/randomness into the active upcoming queue.
    - `steer_radio`: Changes the station's musical direction. Use this when the user says "switch to rock", "play something more chill", "steer to synthwave", etc. This clears and refills the queue with new tracks — it does NOT require starting a new station.
 
 2. STARTING A NEW STATION (use ONLY when NO station is running):

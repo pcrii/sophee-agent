@@ -414,3 +414,92 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
         "upcoming_tracks": upcoming,
     }
 
+
+async def mutate_upcoming_queue(tool_context: ToolContext, chaotic: bool = False) -> dict:
+    """Mutates the tracks currently in the upcoming queue by replacing each track with a
+    randomly selected similar track from Last.fm.
+    Use this when the user requests to mutate, randomize, inject randomness/chaos, reroll,
+    or warp the active upcoming queue of the running station.
+
+    Args:
+        chaotic: If True, selects from a wider pool of similar tracks (limit=20) for more obscure/chaotic matches.
+                 If False (default), selects from a tighter pool (limit=5) for smoother, closer vibes.
+
+    Returns:
+        A success message with the new mutated queue, or an error if no active station.
+    """
+    state = _get_radio_state(tool_context)
+    if not state or not state.get("active"):
+        return {
+            "status": "error",
+            "message": "No active radio broadcast found for this server.",
+        }
+
+    upcoming = state.get("upcoming_tracks", [])
+    if not upcoming:
+        return {
+            "status": "error",
+            "message": "The upcoming queue is empty. There are no tracks to mutate.",
+        }
+
+    from app.tools import fetch_lastfm_similar_tracks
+    import random
+
+    pool_size = 20 if chaotic else 5
+    mutated_tracks = []
+
+    for track in upcoming:
+        artist = track.get("artist", "")
+        title = track.get("title", "")
+        if not artist or not title:
+            mutated_tracks.append(track)
+            continue
+
+        try:
+            similar = await fetch_lastfm_similar_tracks(artist, title, limit=pool_size)
+            if similar:
+                chosen = random.choice(similar)
+                mutated_tracks.append({
+                    "artist": chosen.get("artist", "Unknown Artist"),
+                    "title": chosen.get("title", "Unknown Title")
+                })
+                continue
+        except Exception as e:
+            logger.warning("Failed to mutate track '%s - %s': %s", artist, title, e)
+
+        mutated_tracks.append(track)
+
+    state["upcoming_tracks"] = mutated_tracks
+
+    # Persist change
+    from bot.audio import persist_radio_state_helper
+    from bot.client import session_service
+    import asyncio
+    from app.radio_state import resolve_guild_id
+
+    session = tool_context.session
+    session_id = session.id if session else ""
+    channel_id_str = session_id.replace("discord_", "")
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        channel_id = 9999
+    guild_id = resolve_guild_id(channel_id) or channel_id
+
+    asyncio.create_task(
+        persist_radio_state_helper(guild_id, session_service, channel_id, state)
+    )
+
+    new_upcoming = [
+        {"index": idx + 1, "artist": t.get("artist"), "title": t.get("title")}
+        for idx, t in enumerate(state.get("upcoming_tracks", []))
+    ]
+
+    mode_text = "chaotic" if chaotic else "smooth"
+    return {
+        "status": "success",
+        "message": f"Successfully mutated the upcoming queue ({mode_text} mode).",
+        "upcoming_tracks": new_upcoming,
+    }
+
+
