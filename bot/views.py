@@ -227,9 +227,10 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                     interaction, temp_path, thread_content, view,
                 )
 
+                last_prompt = session.state.get("last_generated_prompt") if session else None
                 await save_image_metadata(
                     message_id=str(sent_msg.id),
-                    prompt=new_prompt,
+                    prompt=last_prompt or new_prompt,
                     style=session.state.get("rolled_style") if session else None,
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,
@@ -319,9 +320,10 @@ class ImageView(discord.ui.View):
                 session = await self.session_service.get_session(
                     app_name="app", user_id=self.user_id, session_id=active_session_id
                 )
+                last_prompt = session.state.get("last_generated_prompt") if session else None
                 await save_image_metadata(
                     message_id=str(sent_msg.id),
-                    prompt=original_prompt or "rerolled image",
+                    prompt=last_prompt or original_prompt or "rerolled image",
                     style=session.state.get("rolled_style") if session else None,
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,
@@ -385,9 +387,10 @@ class ImageView(discord.ui.View):
                 session = await self.session_service.get_session(
                     app_name="app", user_id=self.user_id, session_id=active_session_id
                 )
+                last_prompt = session.state.get("last_generated_prompt") if session else None
                 await save_image_metadata(
                     message_id=str(sent_msg.id),
-                    prompt=original_prompt or "restyled image",
+                    prompt=last_prompt or original_prompt or "restyled image",
                     style=session.state.get("rolled_style") if session else None,
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,

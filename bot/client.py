@@ -471,9 +471,10 @@ async def execute_agent_turn(
             image_session_id = f"discord_image_{sent_msg.id}"
 
         # Save metadata for edit/reroll/restyle
+        last_prompt = session.state.get("last_generated_prompt") or content
         await save_image_metadata(
             message_id=str(sent_msg.id),
-            prompt=content,
+            prompt=last_prompt,
             style=session.state.get("rolled_style") if session else None,
             resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
             image_artifact=new_image_key,

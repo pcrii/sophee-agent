@@ -1130,6 +1130,7 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     client = genai.Client(api_key=api_key)
     try:
+        tool_context.state["last_generated_prompt"] = prompt
         start_fresh = tool_context.state.get("start_fresh_image", False)
         if start_fresh:
             tool_context.state["start_fresh_image"] = False
