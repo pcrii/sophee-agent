@@ -14,6 +14,10 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class SuggestionsUpdateRequest(BaseModel):
+    contents: str
+
+
 def create_app():
     """Creates and configures the FastAPI application."""
     from google.adk.artifacts import InMemoryArtifactService
@@ -70,6 +74,21 @@ def create_app():
             with open(suggestion_file, encoding="utf-8") as f:
                 contents = f.read()
             return {"status": "success", "contents": contents}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @app.post("/api/suggestions/update")
+    async def update_suggestions(request: SuggestionsUpdateRequest):
+        """Overwrites the contents of the suggestion_box.md file."""
+        suggestion_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "suggestion_box.md"
+        )
+        os.makedirs(os.path.dirname(suggestion_file), exist_ok=True)
+        try:
+            with open(suggestion_file, "w", encoding="utf-8") as f:
+                f.write(request.contents)
+            return {"status": "success", "message": "Suggestions file updated successfully."}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
