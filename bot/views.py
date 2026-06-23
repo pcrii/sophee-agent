@@ -206,10 +206,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
 
             await self.update_state_fn(self.user_id, active_session_id, state_updates)
 
-            if original_prompt:
-                edit_prompt = f"Please modify the image created by prompt '{original_prompt}' based on this request: {self.prompt_input.value}"
-            else:
-                edit_prompt = f"Please modify the previous image based on this request: {self.prompt_input.value}"
+            edit_prompt = f"Image edit request: {self.prompt_input.value}"
 
             temp_path, response_text, new_image_key = await _run_agent_and_get_image(
                 self.runner, self.artifact_service, self.user_id, active_session_id, edit_prompt

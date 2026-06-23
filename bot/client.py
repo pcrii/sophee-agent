@@ -238,10 +238,12 @@ async def execute_agent_turn(
 
     # Resolve image sequence threading via replies to image messages
     from bot.cache import get_image_metadata
+    is_image_reply = False
     if message_reference and message_reference.reference and message_reference.reference.resolved:
         replied_msg = message_reference.reference.resolved
         ref_meta = await get_image_metadata(str(replied_msg.id))
         if ref_meta:
+            is_image_reply = True
             artifact_name = ref_meta.get("image_artifact")
             if artifact_name:
                 parent_artifact = ref_meta.get("parent_image_artifact")
@@ -275,7 +277,7 @@ async def execute_agent_turn(
     msg_text = content
 
     # Handle reply context reconstruction (both bot and user messages)
-    if message_reference and message_reference.reference and message_reference.reference.resolved:
+    if message_reference and message_reference.reference and message_reference.reference.resolved and not is_image_reply:
         replied_msg = message_reference.reference.resolved
         chunked_context = await fetch_chunked_context(replied_msg)
         if chunked_context:
