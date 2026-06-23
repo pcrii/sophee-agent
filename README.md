@@ -9,12 +9,14 @@ No slash commands. Just @ mention her and talk.
 ## Features
 
 ### 🎙️ Internet Radio DJ
-- **Playlist Generation** — describe a vibe, genre, or theme and Sophee curates a validated 12-track playlist using LLM knowledge + Last.fm validation
+- **Playlist Generation** — describe a vibe, genre, or theme and Sophee curates a validated 4-track starting sequence using agentic weighted tag expansion + Last.fm validation
 - **Live Voice Playback** — connects to Discord voice channels, downloads songs via yt-dlp, and streams audio with volume control
+- **Track Feedback & Scoring** — thumbs up/down (👍/👎) for session-based JIT steering, and persistent Heart (💖) button to save favorites globally
+- **Auto-Replenishment** — queue dynamically JIT-refills to maintain exactly 3 upcoming tracks, scoring candidates on the fly using your feedback
+- **Discovery Modes** — supports Standard, Genre Discovery (using seed tags and favorites negatively to block duplicates), and Favorites Discovery (seeds from your persistent favorites profile)
 - **DJ Commentary** — generates spoken voice segments between tracks (segues, trivia, station IDs, fake sponsor reads, mood checks, listener mail, field reports) using Google TTS
 - **Time-Aware DJ** — commentary references the current time of day and day of week naturally
 - **Queue Management** — show upcoming tracks, add/insert tracks (with play-next support), remove, shuffle, and steer the radio direction mid-broadcast
-- **Auto-Replenishment** — queue automatically refills using Last.fm similar tracks when it drops below 4 tracks (JIT)
 - **Playlist Mutation** — reroll playlists through Last.fm similarity (smooth or chaotic mutation modes)
 - **New Music Discovery** — fetches actual new releases from MusicBrainz (structured data, no hallucination), falls back to Gemini Search Grounding for niche genres
 - **Song Cache** — downloaded songs are cached locally with LRU eviction at 500MB
