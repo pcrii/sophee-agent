@@ -49,7 +49,41 @@ def create_app():
         logger.info("Feedback received: score=%s, text=%s", feedback.score, feedback.text)
         return {"status": "ok"}
 
+    @app.get("/api/suggestions")
+    async def get_suggestions():
+        """Returns the raw contents of the suggestion_box.md file."""
+        suggestion_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "suggestion_box.md"
+        )
+        if not os.path.exists(suggestion_file):
+            return {"status": "info", "message": "No suggestions found.", "contents": ""}
+        try:
+            with open(suggestion_file, encoding="utf-8") as f:
+                contents = f.read()
+            return {"status": "success", "contents": contents}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/favorites")
+    async def get_favorites():
+        """Returns the structured favorites data from user_favorites.json."""
+        favorites_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "user_favorites.json"
+        )
+        if not os.path.exists(favorites_file):
+            return {"status": "info", "message": "No favorites found.", "favorites": {}}
+        try:
+            with open(favorites_file, encoding="utf-8") as f:
+                import json
+                favorites = json.load(f)
+            return {"status": "success", "favorites": favorites}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     return app
+
 
 
 if __name__ == "__main__":
