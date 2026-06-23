@@ -51,6 +51,7 @@ from app.radio_tools import (
 )
 from app.user_tools import (
     clear_preferences,
+    delete_preference,
     get_user_profile,
     remember_preference,
 )
@@ -111,7 +112,7 @@ class CustomGoogleSearchTool(GoogleSearchTool):
 custom_google_search = CustomGoogleSearchTool()
 
 # User tools available to all agents
-_user_tools = [remember_preference, get_user_profile, clear_preferences]
+_user_tools = [remember_preference, get_user_profile, delete_preference, clear_preferences]
 
 
 # ---------------------------------------------------------------------------

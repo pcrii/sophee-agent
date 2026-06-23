@@ -306,6 +306,7 @@ async def execute_agent_turn(
         session.state["latest_input_image"] = {
             "data": image_data["data"],
             "mime_type": image_data["mime_type"],
+            "original_prompt": "Uploaded reference image",
         }
         # Save user uploaded image as an artifact so it can be referenced in edits
         import hashlib
@@ -326,9 +327,30 @@ async def execute_agent_turn(
     user_prefs = session.state.get("user_prefs", {})
     corrections = user_prefs.get("corrections", [])
     pref_context = ""
-    if corrections:
+    
+    # Try reading from file first
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    file_path = os.path.join(project_root, "data", f"user_profile_{user_id}.txt")
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                pref_context = f.read()
+            logger.debug("Loaded user personalization from file: %s", file_path)
+        except Exception as e:
+            logger.warning("Error reading user personalization file: %s", e)
+            
+    # Fallback to database session state and heal the file if missing
+    if not pref_context and corrections:
         prefs_str = "\n".join(f"- {c}" for c in corrections)
         pref_context = f"\n\n[USER PREFERENCES for this user:\n{prefs_str}]"
+        # Recreate the file to heal it
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(pref_context)
+            logger.info("Healed/recreated user personalization file: %s", file_path)
+        except Exception as e:
+            logger.warning("Failed to recreate user personalization file: %s", e)
 
     # Build the message parts
     parts = []
@@ -380,6 +402,17 @@ async def execute_agent_turn(
     session = await session_service.get_session(
         app_name=APP_NAME, user_id=user_id, session_id=session_id
     )
+
+    embed = None
+    view = None
+
+    # Check for personalization profile embed flag
+    show_profile = session.state.get("show_user_profile_embed") if session else None
+    if show_profile:
+        # Clear the flag so it doesn't trigger repeatedly
+        await update_session_state(user_id, session_id, {"show_user_profile_embed": None})
+        from bot.views import create_user_profile_embed
+        embed = create_user_profile_embed(session.state.get("user_prefs", {}))
 
     # Check for new artifacts (images, TTS)
     after_keys = set(
@@ -542,8 +575,6 @@ async def execute_agent_turn(
         return
 
     # Build adventure HUD / choices if active
-    embed = None
-    view = None
     if session and session.state.get("adventure_active"):
         embed = discord.Embed(
             title="📖 Dungeon Master's HUD",

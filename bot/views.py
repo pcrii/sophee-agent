@@ -23,6 +23,31 @@ logger = logging.getLogger("sophee.bot.views")
 LASTFM_KEY = os.getenv("LASTFM_KEY")
 
 
+def create_user_profile_embed(user_prefs: dict) -> discord.Embed:
+    """Creates a Discord Embed listing the user's recorded personalization statements."""
+    embed = discord.Embed(
+        title="👤 Sophee Personalization Profile",
+        description="Sophee records behavioral corrections and statements about your preferences to personalize your experience.",
+        color=discord.Color.blue(),
+    )
+    
+    corrections = user_prefs.get("corrections", [])
+    if corrections:
+        prefs_str = "\n".join(f"**{i}.** {c}" for i, c in enumerate(corrections, 1))
+        embed.add_field(name="Recorded Preferences & Corrections", value=prefs_str, inline=False)
+        embed.set_footer(text="To remove a preference, say 'delete preference <number>'.")
+    else:
+        embed.add_field(
+            name="Recorded Preferences & Corrections",
+            value="*No preferences recorded yet.*\nCorrect my behavior, share your likes/dislikes, or tell me what to remember, and they will appear here!",
+            inline=False
+        )
+        embed.set_footer(text="Sophee will automatically build your profile as you chat.")
+        
+    return embed
+
+
+
 # ---------------------------------------------------------------------------
 # Shared helper: run agent and extract image artifact
 # ---------------------------------------------------------------------------
