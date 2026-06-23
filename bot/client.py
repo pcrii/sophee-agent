@@ -137,66 +137,56 @@ async def on_ready():
     asyncio.create_task(cleanup_image_metadata())
 
 
-@client.event
-async def on_message(message: discord.Message):
-    # Ignore our own messages and DMs
-    if message.author == client.user:
-        return
-    if not message.guild:
-        return
-
-    # Check if bot is mentioned or replied to
-    is_mentioned = client.user in message.mentions
-    is_reply_to_bot = (
-        message.reference
-        and message.reference.resolved
-        and hasattr(message.reference.resolved, "author")
-        and message.reference.resolved.author == client.user
-    )
-
-    if not is_mentioned and not is_reply_to_bot:
-        return
-
-    # Rate limiting
-    user_id_str = str(message.author.id)
-    if not rate_limiter.check(user_id_str):
-        remaining = rate_limiter.remaining(user_id_str)
-        await message.add_reaction("⏳")
-        logger.debug("Rate limited user %s (%.1fs remaining)", user_id_str, remaining)
-        return
-
-    # Session IDs
-    user_id = str(message.author.id)
-    session_id = f"discord_{message.channel.id}"
-
-    if message.guild:
-        from app.radio_state import register_channel_guild
-        register_channel_guild(message.channel.id, message.guild.id)
-
+async def execute_agent_turn(
+    channel,
+    author,
+    content: str,
+    user_id: str,
+    session_id: str,
+    message_reference=None,
+    image_data=None,
+    interaction=None,
+):
+    """Executes a single conversational agent turn, processes response artifacts (images, TTS),
+    and displays RPG adventure stats/choices if an adventure is active.
+    """
     session = await get_or_create_session(user_id, session_id)
 
     # Trim history before running agent
     await trim_session_history(session_service, APP_NAME, user_id, session_id)
 
     # Process message content
-    msg_text = message.content.replace(f"<@{client.user.id}>", "").strip()
+    msg_text = content
 
     # Handle reply context reconstruction (both bot and user messages)
-    if message.reference and message.reference.resolved:
-        replied_msg = message.reference.resolved
+    if message_reference and message_reference.reference and message_reference.reference.resolved:
+        replied_msg = message_reference.reference.resolved
         chunked_context = await fetch_chunked_context(replied_msg)
         if chunked_context:
             msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
 
-    # Process image attachments
-    image_data = None
-    if message.attachments:
-        for attachment in message.attachments:
-            result = await read_image_attachment(attachment)
-            if result:
-                image_data = result
-                break
+    # Inject adventure state if active
+    is_adv_active = session and session.state.get("adventure_active")
+    if is_adv_active:
+        genre = session.state.get("genre", "Fantasy")
+        char = session.state.get("character_concept", "Traveler")
+        health = session.state.get("player_health", "100/100")
+        inv = ", ".join(session.state.get("inventory", [])) or "None"
+        quests = ", ".join(session.state.get("quest_log", [])) or "None"
+        tension = session.state.get("tension", 10)
 
+        state_info = (
+            f"\n\n[SYSTEM INFO: Active Adventure Thread]\n"
+            f"[Current Genre: {genre}]\n"
+            f"[Character Concept: {char}]\n"
+            f"[Player Health: {health}]\n"
+            f"[Inventory: {inv}]\n"
+            f"[Quest Log: {quests}]\n"
+            f"[Current Tension Level: {tension}/100]"
+        )
+        msg_text = msg_text + state_info
+
+    # Process image attachments
     if image_data:
         session.state["latest_input_image"] = {
             "data": image_data["data"],
@@ -231,9 +221,9 @@ async def on_message(message: discord.Message):
         )
     )
 
-    # Show typing indicator while processing
-    async with message.channel.typing():
-        response_text = ""
+    response_text = ""
+    async def _run_agent():
+        nonlocal response_text
         try:
             async for event in runner.run_async(
                 user_id=user_id,
@@ -249,8 +239,13 @@ async def on_message(message: discord.Message):
                     response_text += "".join([p.text for p in response_parts if p.text])
         except Exception as e:
             logger.exception("Error running ADK agent:")
-            await message.reply(f"An error occurred while processing your request: {e}")
-            return
+            raise e
+
+    if interaction:
+        await _run_agent()
+    else:
+        async with channel.typing():
+            await _run_agent()
 
     # Refresh session to get updated state
     session = await session_service.get_session(
@@ -291,17 +286,24 @@ async def on_message(message: discord.Message):
             runner, artifact_service, session_service, update_session_state,
         )
 
-        sent_msg = await message.reply(
-            content=None,
-            file=discord.File(temp_file_path),
-            view=view,
-        )
+        if message_reference and hasattr(message_reference, "reply"):
+            sent_msg = await message_reference.reply(
+                content=None,
+                file=discord.File(temp_file_path),
+                view=view,
+            )
+        else:
+            sent_msg = await channel.send(
+                content=None,
+                file=discord.File(temp_file_path),
+                view=view,
+            )
         os.remove(temp_file_path)
 
         # Save metadata for edit/reroll/restyle
         await save_image_metadata(
             message_id=str(sent_msg.id),
-            prompt=msg_text,
+            prompt=content,
             style=session.state.get("rolled_style") if session else None,
             resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
             session_id=session.state.get("last_image_interaction_id") if session else None,
@@ -315,7 +317,10 @@ async def on_message(message: discord.Message):
                 await active_thread.edit(archived=True)
             except Exception as thread_err:
                 logger.warning("Error creating image thread: %s", thread_err)
-                await send_message_in_chunks(message, response_text)
+                if message_reference:
+                    await send_message_in_chunks(message_reference, response_text)
+                else:
+                    await send_message_in_chunks(channel, response_text)
         return
 
     # Handle new TTS artifacts
@@ -338,10 +343,16 @@ async def on_message(message: discord.Message):
             f.write(part_data.inline_data.data)
             temp_file_path = f.name
 
-        await message.reply(
-            content=response_text if response_text else None,
-            file=discord.File(temp_file_path),
-        )
+        if message_reference and hasattr(message_reference, "reply"):
+            await message_reference.reply(
+                content=response_text if response_text else None,
+                file=discord.File(temp_file_path),
+            )
+        else:
+            await channel.send(
+                content=response_text if response_text else None,
+                file=discord.File(temp_file_path),
+            )
         os.remove(temp_file_path)
         return
 
@@ -382,21 +393,144 @@ async def on_message(message: discord.Message):
         await session_service.append_event(session, dummy_event)
 
         embed = create_radio_embed(playlist_data)
-
         view = RadioView(
             playlist_data, user_id, session_id, session_service, update_session_state
         )
 
         if response_text:
-            await send_message_in_chunks(message, response_text)
-        await message.channel.send(embed=embed, view=view)
+            if message_reference:
+                await send_message_in_chunks(message_reference, response_text)
+            else:
+                await send_message_in_chunks(channel, response_text)
+        await channel.send(embed=embed, view=view)
         return
 
+    # Build adventure HUD / choices if active
+    embed = None
+    view = None
+    if session and session.state.get("adventure_active"):
+        embed = discord.Embed(
+            title="📖 Dungeon Master's HUD",
+            color=discord.Color.dark_purple(),
+        )
+        embed.add_field(name="❤️ Health", value=session.state.get("player_health", "100/100"), inline=True)
+        embed.add_field(name="⚡ Tension", value=f"{session.state.get('tension', 10)}/100", inline=True)
+        
+        loc = session.state.get("location")
+        if loc:
+            embed.add_field(name="📍 Location", value=loc, inline=False)
+
+        inv_list = session.state.get("inventory", [])
+        embed.add_field(name="🎒 Inventory", value=", ".join(inv_list) if inv_list else "*Empty*", inline=False)
+
+        quests_list = session.state.get("quest_log", [])
+        embed.add_field(name="📜 Active Quests", value="\n".join(f"- {q}" for q in quests_list) if quests_list else "*None*", inline=False)
+
+        choices = session.state.get("choices", [])
+        if choices:
+            from bot.views import AdventureView
+            view = AdventureView(
+                choices=choices,
+                user_id=user_id,
+                session_id=session_id,
+                runner=runner,
+                artifact_service=artifact_service,
+                session_service=session_service,
+                update_state_fn=update_session_state,
+                process_adventure_turn_fn=execute_agent_turn,
+            )
+
     # Default: send text response
-    if response_text:
-        await send_message_in_chunks(message, response_text)
+    if interaction:
+        if response_text:
+            await send_message_in_chunks(interaction.followup, response_text, embed=embed, view=view)
+        elif embed:
+            await interaction.followup.send(embed=embed, view=view)
     else:
-        await message.reply("I processed your request but have no text response.")
+        target = message_reference if message_reference else channel
+        if response_text:
+            await send_message_in_chunks(target, response_text, embed=embed, view=view)
+        else:
+            if message_reference and hasattr(message_reference, "reply"):
+                await message_reference.reply(content="I processed your request but have no text response.", embed=embed, view=view)
+            else:
+                await channel.send(content="I processed your request but have no text response.", embed=embed, view=view)
+
+
+@client.event
+async def on_message(message: discord.Message):
+    # Ignore our own messages and DMs
+    if message.author == client.user:
+        return
+    if not message.guild:
+        return
+
+    # Check if bot is mentioned or replied to
+    is_mentioned = client.user in message.mentions
+    is_reply_to_bot = (
+        message.reference
+        and message.reference.resolved
+        and hasattr(message.reference.resolved, "author")
+        and message.reference.resolved.author == client.user
+    )
+
+    # Bypassed mention/reply check if it is an active adventure thread
+    is_adventure_thread = False
+    if isinstance(message.channel, discord.Thread):
+        temp_session = await session_service.get_session(
+            app_name=APP_NAME, user_id=str(message.author.id), session_id=f"discord_{message.channel.id}"
+        )
+        if temp_session and temp_session.state.get("adventure_active"):
+            is_adventure_thread = True
+
+    if not is_mentioned and not is_reply_to_bot and not is_adventure_thread:
+        return
+
+    # Rate limiting
+    user_id_str = str(message.author.id)
+    if not rate_limiter.check(user_id_str):
+        remaining = rate_limiter.remaining(user_id_str)
+        await message.add_reaction("⏳")
+        logger.debug("Rate limited user %s (%.1fs remaining)", user_id_str, remaining)
+        return
+
+    # Session IDs
+    user_id = str(message.author.id)
+    session_id = f"discord_{message.channel.id}"
+
+    if message.guild:
+        from app.radio_state import register_channel_guild
+        register_channel_guild(message.channel.id, message.guild.id)
+
+    # Process message content
+    msg_text = message.content.replace(f"<@{client.user.id}>", "").strip()
+
+    # Process image attachments
+    image_data = None
+    if message.attachments:
+        for attachment in message.attachments:
+            result = await read_image_attachment(attachment)
+            if result:
+                image_data = result
+                break
+
+    try:
+        await execute_agent_turn(
+            channel=message.channel,
+            author=message.author,
+            content=msg_text,
+            user_id=user_id,
+            session_id=session_id,
+            message_reference=message,
+            image_data=image_data,
+        )
+    except Exception as e:
+        logger.exception("Error running ADK agent:")
+        try:
+            await message.reply(f"An error occurred while processing your request: {e}")
+        except Exception:
+            pass
+
 
 
 # ---------------------------------------------------------------------------

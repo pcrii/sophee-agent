@@ -19,8 +19,8 @@ def bracket_urls(text: str) -> str:
     return re.sub(pattern, r'<\1>', text)
 
 
-async def send_message_in_chunks(message, text, reference=None, is_thread=False):
-    """Splits long messages into <=1950 char chunks, preserving code blocks."""
+async def send_message_in_chunks(message, text, reference=None, is_thread=False, embed=None, view=None):
+    """Splits long messages into <=1950 char chunks, preserving code blocks, and attaching embed/view on last chunk."""
     text = bracket_urls(text)
     max_length = 1950
     chunks = []
@@ -47,17 +47,20 @@ async def send_message_in_chunks(message, text, reference=None, is_thread=False)
 
     for i, chunk in enumerate(chunks):
         try:
+            current_embed = embed if i == len(chunks) - 1 else None
+            current_view = view if i == len(chunks) - 1 else None
             if is_thread:
-                await message.send(chunk)
+                await message.send(chunk, embed=current_embed, view=current_view)
             elif i == 0 and hasattr(message, "reply"):
-                await message.reply(chunk)
+                await message.reply(chunk, embed=current_embed, view=current_view)
             else:
                 if hasattr(message, "send"):
-                    await message.send(chunk)
+                    await message.send(chunk, embed=current_embed, view=current_view)
                 else:
-                    await message.channel.send(chunk)
+                    await message.channel.send(chunk, embed=current_embed, view=current_view)
         except discord.errors.HTTPException as e:
             logger.error("Error sending message chunk: %s", e)
+
 
 
 async def fetch_chunked_context(replied_message, time_threshold_seconds=5.0, max_chunks=5) -> str:

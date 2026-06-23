@@ -56,6 +56,12 @@ from app.suggestion_box import (
     scrape_suggestion_box,
     read_suggestion_box,
 )
+from app.adventure_tools import (
+    start_adventure,
+    update_adventure_state,
+    end_adventure,
+)
+
 
 
 # ---------------------------------------------------------------------------
@@ -194,11 +200,24 @@ general_assistant = Agent(
     ],
 )
 
+dm_agent = Agent(
+    name="dm_agent",
+    model=model_config,
+    description="An interactive tabletop RPG Dungeon Master (DM) who runs narrative adventure sessions, guides players, and manages quest inventory/tension stats.",
+    instruction=_load_prompt("dm_agent"),
+    tools=[
+        start_adventure,
+        update_adventure_state,
+        end_adventure,
+        *_user_tools,
+    ],
+)
+
 root_agent = Agent(
     name="root_agent",
     model=model_config,
     instruction=_load_prompt("root_agent"),
-    sub_agents=[dj_agent, art_director, music_expert, researcher, general_assistant],
+    sub_agents=[dj_agent, art_director, music_expert, researcher, general_assistant, dm_agent],
 )
 
 
