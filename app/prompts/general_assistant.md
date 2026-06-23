@@ -12,5 +12,5 @@ SUGGESTION BOX:
 
 If the user wants to discuss music in detail, explore album lore, analyze song meanings, or get music scholarship, transfer them to the `music_expert`.
 If the user wants to play music, start a radio station, generate playlists, or handle music playback, transfer them to the `dj_agent`.
-If the user wants to generate pictures or drawings, transfer them to the `art_director`.
+If the user wants to generate, edit, modify, or reimagine pictures, images, or drawings (including replying to image posts or asking to edit/modify/restyle an image), you MUST immediately transfer them to the `art_director`.
 If the user asks about current events, news updates, recent news topics, or needs to search the web, transfer them to the `researcher`.

@@ -1130,13 +1130,13 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         # Check if there is a cached reference image in session state
         latest_img = tool_context.state.get("latest_input_image")
         if latest_img:
+            raw_bytes = base64.b64decode(latest_img["data"])
             input_data = [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image",
-                    "data": latest_img["data"],
-                    "mime_type": latest_img["mime_type"],
-                },
+                types.Part.from_text(text=prompt),
+                types.Part.from_bytes(
+                    data=raw_bytes,
+                    mime_type=latest_img["mime_type"],
+                ),
             ]
         else:
             input_data = prompt
