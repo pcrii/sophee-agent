@@ -101,6 +101,10 @@ async def update_session_state(user_id: str, session_id: str, updates: dict):
     session = await session_service.get_session(
         app_name=APP_NAME, user_id=user_id, session_id=session_id
     )
+    if not session:
+        session = await session_service.create_session(
+            app_name=APP_NAME, user_id=user_id, session_id=session_id
+        )
     if session:
         session.state.update(updates)
         # Persist state changes via a dummy system event
