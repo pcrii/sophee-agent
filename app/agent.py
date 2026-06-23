@@ -79,12 +79,17 @@ def _load_prompt(name: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Model configuration
+# NOTE: DO NOT use the Gemini Interactions API (use_interactions_api=True)
+# here or in any helper tools. The Interactions API currently breaks
+# automatic function calling (Python), which ADK relies on for agent tools.
+# Always use the standard generate_content API (the default).
 # ---------------------------------------------------------------------------
 
 model_config = Gemini(
     model="gemini-3.1-flash-lite",
     retry_options=types.HttpRetryOptions(attempts=3),
 )
+
 
 
 # ---------------------------------------------------------------------------

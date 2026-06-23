@@ -41,7 +41,8 @@ async def save_image_metadata(
     prompt: str,
     style: dict | None,
     resolution: str,
-    session_id: str,
+    session_id: str = None,
+    image_artifact: str = None,
 ):
     """Saves metadata for a generated image, keyed by the Discord Message ID.
     Enforces a maximum cache size of CACHE_LIMIT to prevent disk bloat.
@@ -62,10 +63,11 @@ async def save_image_metadata(
             "style": style,
             "resolution": resolution,
             "session_id": session_id,
+            "image_artifact": image_artifact,
             "timestamp": time.time(),
         }
         _save_cache(cache)
-        logger.debug("Cached image metadata for message %s", message_id)
+        logger.debug("Cached image metadata for message %s (artifact: %s)", message_id, image_artifact)
 
 
 async def get_image_metadata(message_id: str) -> dict | None:

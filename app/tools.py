@@ -855,8 +855,16 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 }}"""
 
     try:
-        interaction = await client.aio.interactions.create(model=model_id, input=prompt)
-        text = interaction.output_text
+        contents = [
+            types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
+        ]
+        response = await client.aio.models.generate_content(
+            model=model_id,
+            contents=contents,
+        )
+        text = response.text
+        contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+
         data = _extract_json(text)
 
         all_valid_tracks = []
@@ -908,12 +916,14 @@ CRITICAL RULES:
 
 Use the same JSON array format."""
 
-            interaction = await client.aio.interactions.create(
+            contents.append(types.Content(role="user", parts=[types.Part.from_text(text=retry_prompt)]))
+            response = await client.aio.models.generate_content(
                 model=model_id,
-                previous_interaction_id=interaction.id,
-                input=retry_prompt,
+                contents=contents,
             )
-            text = interaction.output_text
+            text = response.text
+            contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+
             new_data = _extract_json(text)
             current_tracks = new_data.get("selected_tracks", [])
 
@@ -1054,10 +1064,10 @@ CRITICAL RULE:
 Ensure the divider "#### TRANSCRIPT" is used exactly as written before the spoken text."""
 
     try:
-        script_interaction = await client.aio.interactions.create(
-            model=model_id, input=script_prompt
+        response = await client.aio.models.generate_content(
+            model=model_id, contents=script_prompt
         )
-        full_script = script_interaction.output_text
+        full_script = response.text
 
         # Convert the script to audio
         response = await client.aio.models.generate_content(
@@ -1123,20 +1133,18 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         start_fresh = tool_context.state.get("start_fresh_image", False)
         if start_fresh:
             tool_context.state["start_fresh_image"] = False
-            prev_id = None
-        else:
-            prev_id = tool_context.state.get("last_image_interaction_id")
+            tool_context.state.pop("latest_input_image", None)
 
         # Check if there is a cached reference image in session state
         latest_img = tool_context.state.get("latest_input_image")
         if latest_img:
             raw_bytes = base64.b64decode(latest_img["data"])
             input_data = [
-                types.Part.from_text(text=prompt),
                 types.Part.from_bytes(
                     data=raw_bytes,
                     mime_type=latest_img["mime_type"],
                 ),
+                types.Part.from_text(text=prompt),
             ]
         else:
             input_data = prompt
@@ -1148,31 +1156,22 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
 
         tool_context.state["latest_resolution"] = resolution
 
-        kwargs = {
-            "model": "gemini-3.1-flash-image",
-            "input": input_data,
-            "response_format": {"type": "image"},
-            "generation_config": {
-                "image_config": {
-                    "image_size": api_image_size
-                }
-            },
-        }
-        if prev_id:
-            kwargs["previous_interaction_id"] = prev_id
-
-        image_interaction = await client.aio.interactions.create(**kwargs)  # type: ignore
-
-        # Save the interaction id for multi-turn editing
-        tool_context.state["last_image_interaction_id"] = image_interaction.id
+        response = await client.aio.models.generate_content(
+            model="gemini-3.1-flash-image",
+            contents=input_data,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(
+                    image_size=api_image_size
+                )
+            ),
+        )
 
         image_bytes = None
-        for img_step in image_interaction.steps:
-            if img_step.type == "model_output":
-                for content_block in img_step.content:
-                    if content_block.type == "image":
-                        image_bytes = base64.b64decode(content_block.data)
-                        break
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.data:
+                image_bytes = part.inline_data.data
+                break
 
         if image_bytes:
             part = types.Part(

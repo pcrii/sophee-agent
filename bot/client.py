@@ -234,28 +234,35 @@ async def execute_agent_turn(
     # Trim history before running agent
     await trim_session_history(session_service, APP_NAME, user_id, session_id)
 
-    # Resolve image interaction sequence threading
+    # Clear the previous turn's reference image to ensure a fresh generation by default
+    session.state.pop("latest_input_image", None)
+
+    # Resolve image sequence threading via replies to image messages
     from bot.cache import get_image_metadata
-    last_image_id = None
     if message_reference and message_reference.reference and message_reference.reference.resolved:
         replied_msg = message_reference.reference.resolved
         ref_meta = await get_image_metadata(str(replied_msg.id))
         if ref_meta:
-            last_image_id = ref_meta.get("session_id")
+            artifact_name = ref_meta.get("image_artifact")
+            if artifact_name:
+                try:
+                    part = await artifact_service.load_artifact(
+                        app_name=APP_NAME,
+                        user_id=user_id,
+                        filename=artifact_name,
+                        session_id=session_id,
+                    )
+                    if part and part.inline_data and part.inline_data.data:
+                        import base64
+                        img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                        session.state["latest_input_image"] = {
+                            "data": img_b64,
+                            "mime_type": part.inline_data.mime_type or "image/jpeg",
+                        }
+                        logger.info("Loaded reply reference image from artifact: %s", artifact_name)
+                except Exception as e:
+                    logger.error("Failed to load reply reference image artifact %s: %s", artifact_name, e)
 
-    # Only update and persist if it changed
-    if session.state.get("last_image_interaction_id") != last_image_id:
-        session.state["last_image_interaction_id"] = last_image_id
-        from google.adk.events import Event, EventActions
-        import time
-        import uuid
-        dummy_event = Event(
-            timestamp=time.time(),
-            author="system",
-            invocation_id=f"state_update_{uuid.uuid4().hex[:8]}",
-            actions=EventActions(state_delta={"last_image_interaction_id": last_image_id}),
-        )
-        await session_service.append_event(session, dummy_event)
 
     # Process message content
     msg_text = content
@@ -408,7 +415,7 @@ async def execute_agent_turn(
             prompt=content,
             style=session.state.get("rolled_style") if session else None,
             resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
-            session_id=session.state.get("last_image_interaction_id") if session else None,
+            image_artifact=new_image_key,
         )
 
         # Send text response in an archived thread

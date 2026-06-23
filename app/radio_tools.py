@@ -253,9 +253,9 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 {{
   "seed_tags": ["tag1", "tag2", "tag3"]
 }}"""
-            interaction = await client.aio.interactions.create(model=model_id, input=prompt)
+            response = await client.aio.models.generate_content(model=model_id, contents=prompt)
             from app.tools import _extract_json
-            data = _extract_json(interaction.output_text)
+            data = _extract_json(response.text)
             seed_tags = data.get("seed_tags", [])
             state["seed_tags"] = seed_tags
         except Exception as e:
@@ -363,9 +363,9 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 {{
   "seed_tags": ["tag1", "tag2", "tag3"]
 }}"""
-            interaction = await client.aio.interactions.create(model=model_id, input=prompt)
+            response = await client.aio.models.generate_content(model=model_id, contents=prompt)
             from app.tools import _extract_json
-            data = _extract_json(interaction.output_text)
+            data = _extract_json(response.text)
             seed_tags = data.get("seed_tags", [])
             state["seed_tags"] = seed_tags
         except Exception as e:
