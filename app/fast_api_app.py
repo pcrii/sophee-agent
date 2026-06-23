@@ -25,7 +25,7 @@ def create_app():
         logging.basicConfig(level=logging.INFO)
         logger.info("Using standard Python logging")
 
-    session_service = DatabaseSessionService(db_url="sqlite:///sessions.db")
+    session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
     artifact_service = InMemoryArtifactService()
 
     # Check for GCS artifact storage
