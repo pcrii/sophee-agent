@@ -429,77 +429,110 @@ async def audio_player_task(vc, queue, channel, abort_event):
     """Async consumer that plays audio items from a queue in a voice channel."""
     from bot.views import SkipView
 
-    while True:
-        if abort_event.is_set():
-            break
+    try:
+        while True:
+            if abort_event.is_set():
+                break
 
-        item = await queue.get()
-        if item is None or abort_event.is_set():
-            break
+            item = await queue.get()
+            if item is None or abort_event.is_set():
+                break
 
-        if len(item) == 3:
-            file_path, label, report = item
-        else:
-            file_path, label = item
-            report = ""
+            try:
+                if len(item) == 3:
+                    file_path, label, report = item
+                else:
+                    file_path, label = item
+                    report = ""
 
-        if file_path and os.path.exists(file_path):
-            await channel.send(
-                f"\U0001f4fb Now Playing: **{label}**",
-                view=SkipView(vc, queue, abort_event),
-            )
+                if file_path and os.path.exists(file_path):
+                    await channel.send(
+                        f"\U0001f4fb Now Playing: **{label}**",
+                        view=SkipView(vc, queue, abort_event),
+                    )
 
-            if report:
-                try:
-                    with open("yt_search_candidates.log", "a", encoding="utf-8") as f:
-                        f.write(f"\n--- SEARCH CANDIDATES FOR: {label} ---\n")
-                        f.write(report + "\n")
-                except Exception as e:
-                    logger.warning("Failed to write candidate log: %s", e)
+                    if report:
+                        try:
+                            with open("yt_search_candidates.log", "a", encoding="utf-8") as f:
+                                f.write(f"\n--- SEARCH CANDIDATES FOR: {label} ---\n")
+                                f.write(report + "\n")
+                        except Exception as e:
+                            logger.warning("Failed to write candidate log: %s", e)
 
-            if hasattr(channel, "guild") and channel.guild:
-                now_playing_cache[channel.guild.id] = label
+                    if hasattr(channel, "guild") and channel.guild:
+                        now_playing_cache[channel.guild.id] = label
 
-            # Update voice channel status for songs (not TTS segments)
-            if "tts_cache" not in file_path and "artifacts" not in file_path:
-                try:
-                    status_text = f"Now Playing: {label}"[:170]
-                    if hasattr(vc.channel, "edit"):
-                        await vc.channel.edit(status=status_text)
-                except Exception as e:
-                    logger.debug("Failed to update VC status: %s", e)
+                    # Update voice channel status for songs (not TTS segments)
+                    if "tts_cache" not in file_path and "artifacts" not in file_path:
+                        try:
+                            status_text = f"Now Playing: {label}"[:170]
+                            if hasattr(vc.channel, "edit"):
+                                await vc.channel.edit(status=status_text)
+                        except Exception as e:
+                            logger.debug("Failed to update VC status: %s", e)
 
-            play_event = asyncio.Event()
+                    play_event = asyncio.Event()
 
-            def after_play(error, event=play_event):
-                if error:
-                    logger.error("Player error: %s", error)
-                vc.loop.call_soon_threadsafe(event.set)
+                    def after_play(error, event=play_event):
+                        if error:
+                            logger.error("Player error: %s", error)
+                        vc.loop.call_soon_threadsafe(event.set)
 
-            # Volume control via PCMVolumeTransformer
-            source = discord.FFmpegPCMAudio(file_path)
-            source = discord.PCMVolumeTransformer(source, volume=DEFAULT_VOLUME)
-            vc.play(source, after=after_play)
-            await play_event.wait()
+                    # Volume control via PCMVolumeTransformer
+                    source = discord.FFmpegPCMAudio(file_path)
+                    source = discord.PCMVolumeTransformer(source, volume=DEFAULT_VOLUME)
+                    
+                    try:
+                        vc.play(source, after=after_play)
+                        await play_event.wait()
+                    except discord.errors.ClientException as ce:
+                        logger.error("ClientException during voice playback: %s", ce)
+                        # Check if reconnecting
+                        reconnect_wait = 0
+                        while not vc.is_connected() and reconnect_wait < 10 and not abort_event.is_set():
+                            await asyncio.sleep(1)
+                            reconnect_wait += 1
+                        
+                        if vc.is_connected() and not abort_event.is_set():
+                            logger.info("Voice client reconnected. Retrying playback...")
+                            try:
+                                source = discord.FFmpegPCMAudio(file_path)
+                                source = discord.PCMVolumeTransformer(source, volume=DEFAULT_VOLUME)
+                                vc.play(source, after=after_play)
+                                await play_event.wait()
+                            except Exception as retry_err:
+                                logger.error("Failed retry of voice playback: %s", retry_err)
+                        else:
+                            logger.error("Voice client failed to reconnect. Stopping player task.")
+                            break
 
-            # Cleanup temporary generated voice files
-            if "tts_cache" in file_path or "artifacts" in file_path:
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
-        else:
-            await channel.send(f"\u26a0\ufe0f Could not load audio for: {label}")
+                    # Cleanup temporary generated voice files
+                    if "tts_cache" in file_path or "artifacts" in file_path:
+                        try:
+                            os.remove(file_path)
+                        except Exception:
+                            pass
+                else:
+                    await channel.send(f"\u26a0\ufe0f Could not load audio for: {label}")
+            except Exception as loop_err:
+                logger.exception("Error in audio_player_task loop: %s", loop_err)
+            finally:
+                queue.task_done()
+    finally:
+        logger.info("Exiting audio_player_task, cleaning up radio state.")
+        abort_event.set()
+        if hasattr(channel, "guild") and channel.guild:
+            g_id = channel.guild.id
+            now_playing_cache.pop(g_id, None)
+            if g_id in active_radios:
+                active_radios[g_id]["active"] = False
 
-        queue.task_done()
+        if vc:
+            try:
+                await vc.disconnect(force=True)
+            except Exception as e:
+                logger.warning("Failed to disconnect voice client on exit: %s", e)
 
-    if hasattr(channel, "guild") and channel.guild:
-        g_id = channel.guild.id
-        now_playing_cache.pop(g_id, None)
-        if g_id in active_radios:
-            active_radios[g_id]["active"] = False
-
-    await vc.disconnect()
     await channel.send("\U0001f4fb Broadcast finished! Disconnecting.")
 
 
@@ -765,123 +798,128 @@ async def build_radio_sequence(
 
     logger.info("Starting continuous radio loop for guild %s", guild_id)
     while state["active"] and not abort_event.is_set():
-        # Get the Discord channel object
-        disc_client = get_discord_client()
-        disc_channel = disc_client.get_channel(channel_id) if disc_client else None
+        try:
+            # Get the Discord channel object
+            disc_client = get_discord_client()
+            disc_channel = disc_client.get_channel(channel_id) if disc_client else None
 
-        await replenish_radio_queue(state, channel=disc_channel)
+            await replenish_radio_queue(state, channel=disc_channel)
 
-        while queue.qsize() >= 2:
-            if abort_event.is_set() or not state["active"]:
-                return
-            await asyncio.sleep(1)
+            while queue.qsize() >= 2:
+                if abort_event.is_set() or not state["active"]:
+                    return
+                await asyncio.sleep(1)
 
-        if not state["upcoming_tracks"]:
-            await asyncio.sleep(2)
-            continue
+            if not state["upcoming_tracks"]:
+                await asyncio.sleep(2)
+                continue
 
-        track = state["upcoming_tracks"].pop(0)
-        state["played_tracks"].append(track)
+            track = state["upcoming_tracks"].pop(0)
+            state["played_tracks"].append(track)
 
-        t_curr = f"{track.get('artist')} - {track.get('title')}"
-        state["current_track"] = t_curr
-        i = len(state["played_tracks"]) - 1
+            t_curr = f"{track.get('artist')} - {track.get('title')}"
+            state["current_track"] = t_curr
+            i = len(state["played_tracks"]) - 1
 
-        # Build sliding window for playlist context
-        played_recent = state["played_tracks"][-3:-1]
-        upcoming_next = state["upcoming_tracks"][:3]
-        window_tracks = [*played_recent, track, *upcoming_next]
+            # Build sliding window for playlist context
+            played_recent = state["played_tracks"][-3:-1]
+            upcoming_next = state["upcoming_tracks"][:3]
+            window_tracks = [*played_recent, track, *upcoming_next]
 
-        full_playlist_str = ""
-        for t in window_tracks:
-            is_curr = (t == track)
-            prefix = "\U0001f50a " if is_curr else "   "
-            full_playlist_str += f"{prefix}{t.get('artist')} - {t.get('title')}\n"
+            full_playlist_str = ""
+            for t in window_tracks:
+                is_curr = (t == track)
+                prefix = "\U0001f50a " if is_curr else "   "
+                full_playlist_str += f"{prefix}{t.get('artist')} - {t.get('title')}\n"
 
-        if use_dj:
-            dj_prompt = ""
-            label = "DJ Segment"
+            if use_dj:
+                dj_prompt = ""
+                label = "DJ Segment"
 
-            if i == 0:
-                dj_prompt = (
-                    f"Write a dense, informative 2-3 sentence intro welcoming listeners "
-                    f"to the show. Instead of using filler adjectives, drop a piece of "
-                    f"overarching trivia or historical context about the "
-                    f"'{state['playlist_thesis']}' theme. You are about to play track 1: "
-                    f"{t_curr}. Here is the visible playlist window for context:\n"
-                    f"{full_playlist_str}\n\nFinally, call `generate_tts` to read your intro."
-                )
-                label = "DJ Intro"
-            else:
-                t_prev_dict = state["played_tracks"][-2]
-                t_prev = f"{t_prev_dict.get('artist')} - {t_prev_dict.get('title')}"
-                segment_type = choose_segment_type(segment_history, fake_ad_count)
-                if segment_type:
-                    prompt_instructions = build_segment_prompt(
-                        segment_type, state["playlist_thesis"],
-                        t_prev, t_curr, i + 1,
-                        "ongoing continuous broadcast", full_playlist_str,
-                    )
+                if i == 0:
                     dj_prompt = (
-                        f"{prompt_instructions}\n\nFinally, call `generate_tts` "
-                        f"to read your commentary."
+                        f"Write a dense, informative 2-3 sentence intro welcoming listeners "
+                        f"to the show. Instead of using filler adjectives, drop a piece of "
+                        f"overarching trivia or historical context about the "
+                        f"'{state['playlist_thesis']}' theme. You are about to play track 1: "
+                        f"{t_curr}. Here is the visible playlist window for context:\n"
+                        f"{full_playlist_str}\n\nFinally, call `generate_tts` to read your intro."
                     )
-                    label = SEGMENT_LABELS.get(segment_type, "DJ Segue")
-                    segment_history.append(segment_type)
-                    if segment_type == "fake_ad":
-                        fake_ad_count += 1
+                    label = "DJ Intro"
+                else:
+                    t_prev_dict = state["played_tracks"][-2]
+                    t_prev = f"{t_prev_dict.get('artist')} - {t_prev_dict.get('title')}"
+                    segment_type = choose_segment_type(segment_history, fake_ad_count)
+                    if segment_type:
+                        prompt_instructions = build_segment_prompt(
+                            segment_type, state["playlist_thesis"],
+                            t_prev, t_curr, i + 1,
+                            "ongoing continuous broadcast", full_playlist_str,
+                        )
+                        dj_prompt = (
+                            f"{prompt_instructions}\n\nFinally, call `generate_tts` "
+                            f"to read your commentary."
+                        )
+                        label = SEGMENT_LABELS.get(segment_type, "DJ Segue")
+                        segment_history.append(segment_type)
+                        if segment_type == "fake_ad":
+                            fake_ad_count += 1
 
-            if dj_prompt:
-                dj_session_id = f"radio_session_{channel_id}"
+                if dj_prompt:
+                    dj_session_id = f"radio_session_{channel_id}"
 
-                if not await session_service.get_session(
-                    app_name="app", user_id="system", session_id=dj_session_id
-                ):
-                    await session_service.create_session(
+                    if not await session_service.get_session(
+                        app_name="app", user_id="system", session_id=dj_session_id
+                    ):
+                        await session_service.create_session(
+                            app_name="app", user_id="system", session_id=dj_session_id
+                        )
+
+                    async for _event in dj_runner.run_async(
+                        user_id="system",
+                        session_id=dj_session_id,
+                        new_message=types.Content(
+                            role="user", parts=[types.Part.from_text(text=dj_prompt)]
+                        ),
+                    ):
+                        pass
+
+                    dj_session = await session_service.get_session(
                         app_name="app", user_id="system", session_id=dj_session_id
                     )
-
-                async for _event in dj_runner.run_async(
-                    user_id="system",
-                    session_id=dj_session_id,
-                    new_message=types.Content(
-                        role="user", parts=[types.Part.from_text(text=dj_prompt)]
-                    ),
-                ):
-                    pass
-
-                dj_session = await session_service.get_session(
-                    app_name="app", user_id="system", session_id=dj_session_id
-                )
-                latest_wav = (
-                    dj_session.state.get("latest_tts_artifact")
-                    if dj_session
-                    else None
-                )
-
-                if latest_wav:
-                    # Clear the artifact reference so it doesn't replay
-                    if dj_session:
-                        dj_session.state["latest_tts_artifact"] = None
-
-                    artifact_data = await artifact_service.load_artifact(
-                        app_name="app",
-                        user_id="system",
-                        filename=latest_wav,
-                        session_id=dj_session_id,
+                    latest_wav = (
+                        dj_session.state.get("latest_tts_artifact")
+                        if dj_session
+                        else None
                     )
 
-                    with tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".wav", dir="tts_cache"
-                    ) as f:
-                        f.write(artifact_data.inline_data.data)
-                        temp_file_path = f.name
+                    if latest_wav:
+                        # Clear the artifact reference so it doesn't replay
+                        if dj_session:
+                            dj_session.state["latest_tts_artifact"] = None
 
-                    await queue.put((temp_file_path, label))
+                        artifact_data = await artifact_service.load_artifact(
+                            app_name="app",
+                            user_id="system",
+                            filename=latest_wav,
+                            session_id=dj_session_id,
+                        )
 
-        s_file, report = await download_song_async(t_curr)
-        if s_file:
-            await queue.put((s_file, t_curr, report))
+                        with tempfile.NamedTemporaryFile(
+                            delete=False, suffix=".wav", dir="tts_cache"
+                        ) as f:
+                            f.write(artifact_data.inline_data.data)
+                            temp_file_path = f.name
+
+                        await queue.put((temp_file_path, label))
+
+            s_file, report = await download_song_async(t_curr)
+            if s_file:
+                await queue.put((s_file, t_curr, report))
+        except Exception as loop_err:
+            logger.exception("Error in build_radio_sequence loop: %s", loop_err)
+            await asyncio.sleep(5)
+
 
     state["active"] = False
     await queue.put(None)
