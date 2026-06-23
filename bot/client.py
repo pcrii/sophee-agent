@@ -132,6 +132,10 @@ async def on_ready():
     logger.info("Sophee is online as %s (ID: %s)", client.user, client.user.id)
     logger.info("Connected to %d guilds", len(client.guilds))
 
+    # Run image cache janitor task
+    from bot.cache import cleanup_image_metadata
+    asyncio.create_task(cleanup_image_metadata())
+
 
 @client.event
 async def on_message(message: discord.Message):
@@ -177,17 +181,12 @@ async def on_message(message: discord.Message):
     # Process message content
     msg_text = message.content.replace(f"<@{client.user.id}>", "").strip()
 
-    # Handle reply context reconstruction
+    # Handle reply context reconstruction (both bot and user messages)
     if message.reference and message.reference.resolved:
         replied_msg = message.reference.resolved
-        if replied_msg.author == client.user:
-            # Replying to bot's message — just use the user's text
-            pass
-        else:
-            # Replying to another user — reconstruct their multi-message context
-            chunked_context = await fetch_chunked_context(replied_msg)
-            if chunked_context:
-                msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
+        chunked_context = await fetch_chunked_context(replied_msg)
+        if chunked_context:
+            msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
 
     # Process image attachments
     image_data = None

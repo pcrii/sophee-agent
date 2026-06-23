@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 
 logger = logging.getLogger("sophee.bot.cache")
 
@@ -61,6 +62,7 @@ async def save_image_metadata(
             "style": style,
             "resolution": resolution,
             "session_id": session_id,
+            "timestamp": time.time(),
         }
         _save_cache(cache)
         logger.debug("Cached image metadata for message %s", message_id)
@@ -74,3 +76,29 @@ async def get_image_metadata(message_id: str) -> dict | None:
     async with _lock:
         cache = _load_cache()
         return cache.get(str(message_id))
+
+
+async def cleanup_image_metadata():
+    """Removes image metadata older than 24 hours (86400 seconds)."""
+    async with _lock:
+        cache = _load_cache()
+        now = time.time()
+        expired_count = 0
+        cleaned_cache = {}
+        for msg_id, data in cache.items():
+            ts = data.get("timestamp")
+            if ts is None:
+                # Keep legacy entries but assign current timestamp so they expire in 24h
+                data["timestamp"] = now
+                cleaned_cache[msg_id] = data
+            elif now - ts <= 86400:
+                cleaned_cache[msg_id] = data
+            else:
+                expired_count += 1
+
+        if expired_count > 0:
+            _save_cache(cleaned_cache)
+            logger.info("Purged %d expired image metadata entries (>24h old)", expired_count)
+        else:
+            logger.debug("No expired image metadata entries to purge")
+
