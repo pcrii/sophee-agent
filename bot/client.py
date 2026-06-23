@@ -19,7 +19,7 @@ from google.genai import types
 
 from app.agent import root_agent
 from app.radio_state import set_discord_client
-from bot.cache import save_image_metadata
+from bot.cache import save_image_metadata, get_image_metadata
 from bot.history import trim_session_history
 from bot.message_utils import (
     bracket_urls,
@@ -425,6 +425,11 @@ async def execute_agent_turn(
             )
         os.remove(temp_file_path)
 
+        # Determine the isolated session ID for this image thread
+        image_session_id = session_id
+        if session_id == f"discord_{channel.id}":
+            image_session_id = f"discord_image_{sent_msg.id}"
+
         # Save metadata for edit/reroll/restyle
         await save_image_metadata(
             message_id=str(sent_msg.id),
@@ -433,6 +438,7 @@ async def execute_agent_turn(
             resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
             image_artifact=new_image_key,
             parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
+            session_id=image_session_id,
         )
 
         # Send text response in an archived thread
@@ -623,6 +629,14 @@ async def on_message(message: discord.Message):
     # Session IDs
     user_id = str(message.author.id)
     session_id = f"discord_{message.channel.id}"
+
+    # Route to isolated image session if replying to a cached image
+    if message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message):
+        ref_msg = message.reference.resolved
+        ref_meta = await get_image_metadata(str(ref_msg.id))
+        if ref_meta and ref_meta.get("session_id"):
+            session_id = ref_meta.get("session_id")
+            logger.info("Routing reply to isolated image session: %s", session_id)
 
     if message.guild:
         from app.radio_state import register_channel_guild

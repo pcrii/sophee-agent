@@ -141,8 +141,12 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                 "latest_input_image": None,  # Clear by default
                 "latest_input_image_artifact": None,
             }
+            active_session_id = self.session_id
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
+                if ref_meta.get("session_id"):
+                    active_session_id = ref_meta.get("session_id")
+                    logger.info("Routing edit modal submission to isolated session: %s", active_session_id)
                 state_updates.update({
                     "rolled_style": ref_meta.get("style"),
                     "latest_resolution": ref_meta.get("resolution"),
@@ -161,7 +165,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                             app_name="app",
                             user_id=self.user_id,
                             filename=image_artifact,
-                            session_id=self.session_id,
+                            session_id=active_session_id,
                         )
                         if part and part.inline_data and part.inline_data.data:
                             img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
@@ -174,7 +178,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                     except Exception as e:
                         logger.error("Failed to load reference image artifact %s for edit: %s", image_artifact, e)
 
-            await self.update_state_fn(self.user_id, self.session_id, state_updates)
+            await self.update_state_fn(self.user_id, active_session_id, state_updates)
 
             if original_prompt:
                 edit_prompt = f"Please modify the image created by prompt '{original_prompt}' based on this request: {self.prompt_input.value}"
@@ -182,16 +186,16 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                 edit_prompt = f"Please modify the previous image based on this request: {self.prompt_input.value}"
 
             temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                self.runner, self.artifact_service, self.user_id, self.session_id, edit_prompt
+                self.runner, self.artifact_service, self.user_id, active_session_id, edit_prompt
             )
 
             if temp_path:
                 view = ImageView(
-                    self.user_id, self.session_id,
+                    self.user_id, active_session_id,
                     self.runner, self.artifact_service, self.session_service, self.update_state_fn,
                 )
                 session = await self.session_service.get_session(
-                    app_name="app", user_id=self.user_id, session_id=self.session_id
+                    app_name="app", user_id=self.user_id, session_id=active_session_id
                 )
                 new_prompt = f"{original_prompt} -> edited to: {self.prompt_input.value}" if original_prompt else self.prompt_input.value
 
@@ -207,6 +211,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,
                     parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
+                    session_id=active_session_id,
                 )
             else:
                 await interaction.followup.send(response_text or "Failed to generate edited image.")
@@ -245,9 +250,12 @@ class ImageView(discord.ui.View):
             ref_meta = await get_image_metadata(parent_msg_id)
 
             original_prompt = ""
+            active_session_id = self.session_id
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
-                await self.update_state_fn(self.user_id, self.session_id, {
+                if ref_meta.get("session_id"):
+                    active_session_id = ref_meta.get("session_id")
+                await self.update_state_fn(self.user_id, active_session_id, {
                     "rolled_style": ref_meta.get("style"),
                     "latest_resolution": ref_meta.get("resolution"),
                     "force_style_roll": False,
@@ -256,7 +264,7 @@ class ImageView(discord.ui.View):
                     "latest_input_image_artifact": None,
                 })
             else:
-                await self.update_state_fn(self.user_id, self.session_id, {
+                await self.update_state_fn(self.user_id, active_session_id, {
                     "force_style_roll": False,
                     "start_fresh_image": True,
                     "latest_input_image": None,
@@ -269,16 +277,16 @@ class ImageView(discord.ui.View):
                 run_prompt = "Start fresh and generate a brand new image using the exact same prompt description and style settings."
 
             temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
+                self.runner, self.artifact_service, self.user_id, active_session_id, run_prompt
             )
 
-            await self.update_state_fn(self.user_id, self.session_id, {
+            await self.update_state_fn(self.user_id, active_session_id, {
                 "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
             })
 
             if temp_path:
                 view = ImageView(
-                    self.user_id, self.session_id,
+                    self.user_id, active_session_id,
                     self.runner, self.artifact_service, self.session_service, self.update_state_fn,
                 )
                 sent_msg = await _send_image_with_thread(
@@ -286,7 +294,7 @@ class ImageView(discord.ui.View):
                 )
 
                 session = await self.session_service.get_session(
-                    app_name="app", user_id=self.user_id, session_id=self.session_id
+                    app_name="app", user_id=self.user_id, session_id=active_session_id
                 )
                 await save_image_metadata(
                     message_id=str(sent_msg.id),
@@ -294,6 +302,7 @@ class ImageView(discord.ui.View):
                     style=session.state.get("rolled_style") if session else None,
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,
+                    session_id=active_session_id,
                 )
             else:
                 await interaction.followup.send(response_text or "Failed to reroll image.")
@@ -309,9 +318,12 @@ class ImageView(discord.ui.View):
             ref_meta = await get_image_metadata(parent_msg_id)
 
             original_prompt = ""
+            active_session_id = self.session_id
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
-                await self.update_state_fn(self.user_id, self.session_id, {
+                if ref_meta.get("session_id"):
+                    active_session_id = ref_meta.get("session_id")
+                await self.update_state_fn(self.user_id, active_session_id, {
                     "rolled_style": ref_meta.get("style"),
                     "latest_resolution": ref_meta.get("resolution"),
                     "force_style_roll": True,
@@ -321,7 +333,7 @@ class ImageView(discord.ui.View):
                     "latest_input_image_artifact": None,
                 })
             else:
-                await self.update_state_fn(self.user_id, self.session_id, {
+                await self.update_state_fn(self.user_id, active_session_id, {
                     "force_style_roll": True, "art_director_mode": "simple", "start_fresh_image": False, "latest_input_image": None, "latest_input_image_artifact": None,
                 })
 
@@ -331,16 +343,16 @@ class ImageView(discord.ui.View):
                 run_prompt = "Roll a random artist inspiration style and apply it to the previous prompt."
 
             temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
+                self.runner, self.artifact_service, self.user_id, active_session_id, run_prompt
             )
 
-            await self.update_state_fn(self.user_id, self.session_id, {
+            await self.update_state_fn(self.user_id, active_session_id, {
                 "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
             })
 
             if temp_path:
                 view = ImageView(
-                    self.user_id, self.session_id,
+                    self.user_id, active_session_id,
                     self.runner, self.artifact_service, self.session_service, self.update_state_fn,
                 )
                 sent_msg = await _send_image_with_thread(
@@ -348,7 +360,7 @@ class ImageView(discord.ui.View):
                 )
 
                 session = await self.session_service.get_session(
-                    app_name="app", user_id=self.user_id, session_id=self.session_id
+                    app_name="app", user_id=self.user_id, session_id=active_session_id
                 )
                 await save_image_metadata(
                     message_id=str(sent_msg.id),
@@ -356,6 +368,7 @@ class ImageView(discord.ui.View):
                     style=session.state.get("rolled_style") if session else None,
                     resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
                     image_artifact=new_image_key,
+                    session_id=active_session_id,
                 )
             else:
                 await interaction.followup.send(response_text or "Failed to restyle image.")
