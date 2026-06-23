@@ -799,7 +799,8 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
         }
 
     # --- Curate the playlist ---
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    client = genai.Client(api_key=api_key)
     model_id = "gemini-3.1-flash-lite"
 
     # Seeding based on mode
@@ -956,7 +957,8 @@ async def generate_tts(text: str, tool_context: ToolContext) -> dict:
     Returns:
         A dictionary containing the artifact name.
     """
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    client = genai.Client(api_key=api_key)
     try:
         response = await client.aio.models.generate_content(
             model="gemini-3.1-flash-tts-preview",
@@ -1005,7 +1007,8 @@ async def generate_tts_script(context: str, tool_context: ToolContext) -> dict:
     Returns:
         A dictionary containing the generated script text and the audio artifact name.
     """
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    client = genai.Client(api_key=api_key)
     model_id = "gemini-3.1-flash-lite"
 
     script_prompt = f"""You are a scriptwriter and audio director. I have a simple context but NO TRANSCRIPT.
@@ -1114,7 +1117,8 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
     Returns:
         A dictionary containing the generated image's artifact name.
     """
-    client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    client = genai.Client(api_key=api_key)
     try:
         start_fresh = tool_context.state.get("start_fresh_image", False)
         if start_fresh:

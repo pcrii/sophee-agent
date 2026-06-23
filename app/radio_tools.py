@@ -243,7 +243,8 @@ async def steer_radio(direction: str, tool_context: ToolContext) -> dict:
         import os
         from google import genai
         try:
-            client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            client = genai.Client(api_key=api_key)
             model_id = "gemini-3.1-flash-lite"
             prompt = f"""You are a music expert. The user wants to steer their discovery radio to: '{direction}'.
 Generate a list of exactly 3-5 relevant, specific Last.fm tags that represent this sonic direction.
@@ -352,7 +353,8 @@ async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
         import os
         from google import genai
         try:
-            client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            client = genai.Client(api_key=api_key)
             model_id = "gemini-3.1-flash-lite"
             prompt = f"""You are a music expert. The user wants to steer their discovery radio to: '{genre}'.
 Generate a list of exactly 3-5 relevant, specific Last.fm tags that represent this sonic direction.
