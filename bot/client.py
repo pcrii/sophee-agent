@@ -234,6 +234,29 @@ async def execute_agent_turn(
     # Trim history before running agent
     await trim_session_history(session_service, APP_NAME, user_id, session_id)
 
+    # Resolve image interaction sequence threading
+    from bot.cache import get_image_metadata
+    last_image_id = None
+    if message_reference and message_reference.reference and message_reference.reference.resolved:
+        replied_msg = message_reference.reference.resolved
+        ref_meta = await get_image_metadata(str(replied_msg.id))
+        if ref_meta:
+            last_image_id = ref_meta.get("session_id")
+
+    # Only update and persist if it changed
+    if session.state.get("last_image_interaction_id") != last_image_id:
+        session.state["last_image_interaction_id"] = last_image_id
+        from google.adk.events import Event, EventActions
+        import time
+        import uuid
+        dummy_event = Event(
+            timestamp=time.time(),
+            author="system",
+            invocation_id=f"state_update_{uuid.uuid4().hex[:8]}",
+            actions=EventActions(state_delta={"last_image_interaction_id": last_image_id}),
+        )
+        await session_service.append_event(session, dummy_event)
+
     # Process message content
     msg_text = content
 
