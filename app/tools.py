@@ -1149,6 +1149,15 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         else:
             input_data = prompt
 
+        # Determine media resolution if there is a reference image
+        req_media_res = None
+        if latest_img:
+            if "ultra" in prompt.lower():
+                req_media_res = "MEDIA_RESOLUTION_ULTRA_HIGH"
+            else:
+                req_media_res = "MEDIA_RESOLUTION_HIGH"
+            logger.info("Using media_resolution=%s for reference image processing", req_media_res)
+
         # Map resolution to the model's native image_size string
         api_image_size = "512"
         if resolution.lower().strip() == "1k":
@@ -1156,15 +1165,17 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
 
         tool_context.state["latest_resolution"] = resolution
 
+        config_args = {
+            "response_modalities": ["IMAGE"],
+            "image_config": types.ImageConfig(image_size=api_image_size)
+        }
+        if req_media_res:
+            config_args["media_resolution"] = req_media_res
+
         response = await client.aio.models.generate_content(
             model="gemini-3.1-flash-image",
             contents=input_data,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"],
-                image_config=types.ImageConfig(
-                    image_size=api_image_size
-                )
-            ),
+            config=types.GenerateContentConfig(**config_args),
         )
 
         image_bytes = None
