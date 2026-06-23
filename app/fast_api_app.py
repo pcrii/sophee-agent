@@ -109,6 +109,95 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    @app.get("/api/debug/sessions")
+    async def list_debug_sessions():
+        """Lists the most recently updated sessions from the database."""
+        import sqlite3
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "sessions.db"
+        )
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT app_name, user_id, id, update_time
+                FROM sessions
+                ORDER BY update_time DESC
+                LIMIT 20
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+            sessions_list = [
+                {
+                    "app_name": row[0],
+                    "user_id": row[1],
+                    "session_id": row[2],
+                    "update_time": row[3]
+                }
+                for row in rows
+            ]
+            return {"status": "success", "sessions": sessions_list}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/debug/session/{user_id}/{session_id}")
+    async def get_debug_session(user_id: str, session_id: str):
+        """Returns the full list of events for the specified session."""
+        import sqlite3
+        import json
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "sessions.db"
+        )
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, invocation_id, timestamp, event_data
+                FROM events
+                WHERE user_id = ? AND session_id = ?
+                ORDER BY timestamp ASC
+            """, (user_id, session_id))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            events_list = []
+            for row in rows:
+                try:
+                    event_data = json.loads(row[3])
+                except Exception:
+                    event_data = row[3]
+                events_list.append({
+                    "id": row[0],
+                    "invocation_id": row[1],
+                    "timestamp": row[2],
+                    "event_data": event_data
+                })
+            return {"status": "success", "events": events_list}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @app.get("/api/debug/logs")
+    async def get_debug_logs(lines: int = 100):
+        """Returns the last N lines of the systemd service logs."""
+        import subprocess
+        try:
+            res = subprocess.run(
+                ["journalctl", "-u", "sophee.service", "-n", str(lines), "--no-pager"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return {
+                "status": "success",
+                "stdout": res.stdout,
+                "stderr": res.stderr,
+                "exit_code": res.returncode
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     return app
 
 
