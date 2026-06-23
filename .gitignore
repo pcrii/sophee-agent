@@ -1,0 +1,26 @@
+# Environment
+.env
+.env.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Runtime caches and data
+song_cache/
+tts_cache/
+bot_image_cache.json
+sessions.db
+yt_search_candidates.log
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

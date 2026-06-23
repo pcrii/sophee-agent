@@ -1,0 +1,646 @@
+"""Discord UI components for Sophee.
+
+Consolidates ImageView, ImageEditModal, RadioView, and SkipView.
+Deduplicates the image artifact detection + thread creation pattern.
+"""
+
+import asyncio
+import logging
+import os
+import random
+import tempfile
+
+import discord
+import requests
+from google.genai import types
+
+from bot.cache import get_image_metadata, save_image_metadata
+from bot.message_utils import bracket_urls, send_message_in_chunks
+
+logger = logging.getLogger("sophee.bot.views")
+
+LASTFM_KEY = os.getenv("LASTFM_KEY")
+
+
+# ---------------------------------------------------------------------------
+# Shared helper: run agent and extract image artifact
+# ---------------------------------------------------------------------------
+
+async def _run_agent_and_get_image(
+    runner, artifact_service, user_id, session_id, prompt_text
+):
+    """Runs the agent with a prompt and returns (temp_file_path, response_text, new_image_key) or (None, response_text, None)."""
+    before_keys = set(
+        await artifact_service.list_artifact_keys(
+            app_name="app", user_id=user_id, session_id=session_id
+        )
+    )
+
+    response_text = ""
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=types.Content(
+            role="user", parts=[types.Part.from_text(text=prompt_text)]
+        ),
+    ):
+        if event.is_final_response():
+            response_parts = (
+                event.content.parts
+                if (event.content and event.content.parts)
+                else []
+            )
+            response_text += "".join([p.text for p in response_parts if p.text])
+
+    after_keys = set(
+        await artifact_service.list_artifact_keys(
+            app_name="app", user_id=user_id, session_id=session_id
+        )
+    )
+    new_keys = after_keys - before_keys
+
+    new_image_key = None
+    for key in new_keys:
+        if key.endswith((".jpeg", ".jpg", ".png")):
+            new_image_key = key
+            break
+
+    if new_image_key:
+        part = await artifact_service.load_artifact(
+            app_name="app",
+            user_id=user_id,
+            filename=new_image_key,
+            session_id=session_id,
+        )
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpeg", mode="wb") as f:
+            f.write(part.inline_data.data)
+            temp_file_path = f.name
+        return temp_file_path, response_text, new_image_key
+
+    return None, response_text, None
+
+
+async def _send_image_with_thread(
+    interaction_or_message, temp_file_path, response_text, view, label="Image Details",
+    *, is_followup=True,
+):
+    """Sends an image file with a view and creates an archived thread for details."""
+    if is_followup:
+        sent_msg = await interaction_or_message.followup.send(
+            content=None, file=discord.File(temp_file_path), view=view,
+        )
+    else:
+        sent_msg = await interaction_or_message.reply(
+            content=None, file=discord.File(temp_file_path), view=view,
+        )
+    os.remove(temp_file_path)
+
+    if response_text:
+        try:
+            fetched_msg = await interaction_or_message.channel.fetch_message(sent_msg.id) if is_followup else sent_msg
+            active_thread = await fetched_msg.create_thread(name=label)
+            await send_message_in_chunks(active_thread, response_text, is_thread=True)
+            await active_thread.edit(archived=True)
+        except Exception as thread_err:
+            logger.warning("Error creating thread: %s", thread_err)
+            channel = interaction_or_message.channel if is_followup else interaction_or_message
+            await send_message_in_chunks(channel, response_text, is_thread=False)
+
+    return sent_msg
+
+
+# ---------------------------------------------------------------------------
+# Image Edit Modal
+# ---------------------------------------------------------------------------
+
+class ImageEditModal(discord.ui.Modal, title="Edit Image"):
+    prompt_input = discord.ui.TextInput(
+        label="New Prompt / Edit Instructions",
+        style=discord.TextStyle.paragraph,
+        placeholder="e.g., make it darker, add a hat...",
+        required=True,
+    )
+
+    def __init__(self, user_id, session_id, runner, artifact_service, session_service, update_state_fn):
+        super().__init__()
+        self.user_id = user_id
+        self.session_id = session_id
+        self.runner = runner
+        self.artifact_service = artifact_service
+        self.session_service = session_service
+        self.update_state_fn = update_state_fn
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)
+        try:
+            parent_msg_id = str(interaction.message.id) if interaction.message else None
+            ref_meta = await get_image_metadata(parent_msg_id)
+            original_prompt = ""
+            if ref_meta:
+                original_prompt = ref_meta.get("prompt", "")
+                self.update_state_fn(self.user_id, self.session_id, {
+                    "rolled_style": ref_meta.get("style"),
+                    "latest_resolution": ref_meta.get("resolution"),
+                    "last_image_interaction_id": ref_meta.get("session_id"),
+                })
+
+            if original_prompt:
+                edit_prompt = f"Please modify the image created by prompt '{original_prompt}' based on this request: {self.prompt_input.value}"
+            else:
+                edit_prompt = f"Please modify the previous image based on this request: {self.prompt_input.value}"
+
+            temp_path, response_text, _ = await _run_agent_and_get_image(
+                self.runner, self.artifact_service, self.user_id, self.session_id, edit_prompt
+            )
+
+            if temp_path:
+                view = ImageView(
+                    self.user_id, self.session_id,
+                    self.runner, self.artifact_service, self.session_service, self.update_state_fn,
+                )
+                session = await self.session_service.get_session(
+                    app_name="app", user_id=self.user_id, session_id=self.session_id
+                )
+                new_prompt = f"{original_prompt} -> edited to: {self.prompt_input.value}" if original_prompt else self.prompt_input.value
+
+                thread_content = f"Edited based on: **{self.prompt_input.value}**\n\n{response_text}" if response_text else f"Edited based on: **{self.prompt_input.value}**"
+                sent_msg = await _send_image_with_thread(
+                    interaction, temp_path, thread_content, view,
+                )
+
+                await save_image_metadata(
+                    message_id=str(sent_msg.id),
+                    prompt=new_prompt,
+                    style=session.state.get("rolled_style") if session else None,
+                    resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
+                    session_id=session.state.get("last_image_interaction_id") if session else None,
+                )
+            else:
+                await interaction.followup.send(response_text or "Failed to generate edited image.")
+        except Exception as e:
+            logger.error("Image editing error: %s", e)
+            await interaction.followup.send(f"Error editing image: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Image View (Edit / Reroll / Restyle buttons)
+# ---------------------------------------------------------------------------
+
+class ImageView(discord.ui.View):
+    def __init__(self, user_id, session_id, runner, artifact_service, session_service, update_state_fn):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.session_id = session_id
+        self.runner = runner
+        self.artifact_service = artifact_service
+        self.session_service = session_service
+        self.update_state_fn = update_state_fn
+
+    @discord.ui.button(label="Edit Image", style=discord.ButtonStyle.primary, emoji="\u270f\ufe0f")
+    async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = ImageEditModal(
+            self.user_id, self.session_id,
+            self.runner, self.artifact_service, self.session_service, self.update_state_fn,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Reroll", style=discord.ButtonStyle.secondary, emoji="\U0001f501")
+    async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(thinking=True)
+        try:
+            parent_msg_id = str(interaction.message.id)
+            ref_meta = await get_image_metadata(parent_msg_id)
+
+            original_prompt = ""
+            if ref_meta:
+                original_prompt = ref_meta.get("prompt", "")
+                self.update_state_fn(self.user_id, self.session_id, {
+                    "rolled_style": ref_meta.get("style"),
+                    "latest_resolution": ref_meta.get("resolution"),
+                    "last_image_interaction_id": ref_meta.get("session_id"),
+                    "force_style_roll": False,
+                    "start_fresh_image": True,
+                })
+            else:
+                self.update_state_fn(self.user_id, self.session_id, {
+                    "force_style_roll": False, "start_fresh_image": True,
+                })
+
+            if original_prompt:
+                run_prompt = f"Start fresh and generate a brand new image using the exact same prompt description: '{original_prompt}'. Do not roll a new style; reuse the existing rolled_style if it was active."
+            else:
+                run_prompt = "Start fresh and generate a brand new image using the exact same prompt description and style settings."
+
+            temp_path, response_text, _ = await _run_agent_and_get_image(
+                self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
+            )
+
+            self.update_state_fn(self.user_id, self.session_id, {
+                "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
+            })
+
+            if temp_path:
+                view = ImageView(
+                    self.user_id, self.session_id,
+                    self.runner, self.artifact_service, self.session_service, self.update_state_fn,
+                )
+                sent_msg = await _send_image_with_thread(
+                    interaction, temp_path, f"\U0001f501 **Reroll**\n\n{response_text}", view,
+                )
+
+                session = await self.session_service.get_session(
+                    app_name="app", user_id=self.user_id, session_id=self.session_id
+                )
+                await save_image_metadata(
+                    message_id=str(sent_msg.id),
+                    prompt=original_prompt or "rerolled image",
+                    style=session.state.get("rolled_style") if session else None,
+                    resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
+                    session_id=session.state.get("last_image_interaction_id") if session else None,
+                )
+            else:
+                await interaction.followup.send(response_text or "Failed to reroll image.")
+        except Exception as e:
+            logger.error("Error in reroll: %s", e)
+            await interaction.followup.send(f"Error in reroll: {e}")
+
+    @discord.ui.button(label="Restyle", style=discord.ButtonStyle.secondary, emoji="\U0001f58c\ufe0f")
+    async def restyle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(thinking=True)
+        try:
+            parent_msg_id = str(interaction.message.id)
+            ref_meta = await get_image_metadata(parent_msg_id)
+
+            original_prompt = ""
+            if ref_meta:
+                original_prompt = ref_meta.get("prompt", "")
+                self.update_state_fn(self.user_id, self.session_id, {
+                    "rolled_style": ref_meta.get("style"),
+                    "latest_resolution": ref_meta.get("resolution"),
+                    "last_image_interaction_id": ref_meta.get("session_id"),
+                    "force_style_roll": True,
+                    "art_director_mode": "simple",
+                    "start_fresh_image": False,
+                })
+            else:
+                self.update_state_fn(self.user_id, self.session_id, {
+                    "force_style_roll": True, "art_director_mode": "simple", "start_fresh_image": False,
+                })
+
+            if original_prompt:
+                run_prompt = f"Roll a random artist inspiration style and apply it to the prompt: '{original_prompt}'."
+            else:
+                run_prompt = "Roll a random artist inspiration style and apply it to the previous prompt."
+
+            temp_path, response_text, _ = await _run_agent_and_get_image(
+                self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
+            )
+
+            self.update_state_fn(self.user_id, self.session_id, {
+                "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
+            })
+
+            if temp_path:
+                view = ImageView(
+                    self.user_id, self.session_id,
+                    self.runner, self.artifact_service, self.session_service, self.update_state_fn,
+                )
+                sent_msg = await _send_image_with_thread(
+                    interaction, temp_path, f"\U0001f58c\ufe0f **Restyle**\n\n{response_text}", view,
+                )
+
+                session = await self.session_service.get_session(
+                    app_name="app", user_id=self.user_id, session_id=self.session_id
+                )
+                await save_image_metadata(
+                    message_id=str(sent_msg.id),
+                    prompt=original_prompt or "restyled image",
+                    style=session.state.get("rolled_style") if session else None,
+                    resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
+                    session_id=session.state.get("last_image_interaction_id") if session else None,
+                )
+            else:
+                await interaction.followup.send(response_text or "Failed to restyle image.")
+        except Exception as e:
+            logger.error("Error restyling image: %s", e)
+            await interaction.followup.send(f"Error restyling image: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Radio View
+# ---------------------------------------------------------------------------
+
+async def mutate_playlist_via_lastfm(playlist_data, pool_size=5):
+    """For each track in a playlist, fetch similar tracks and randomly replace."""
+    mutated_tracks = []
+    tracks = playlist_data.get("tracks", [])
+
+    for track in tracks:
+        artist = track.get("artist", "")
+        title = track.get("title", "")
+
+        url = (
+            f"http://ws.audioscrobbler.com/2.0/?method=track.getsimilar"
+            f"&artist={requests.utils.quote(artist)}"
+            f"&track={requests.utils.quote(title)}"
+            f"&api_key={LASTFM_KEY}&format=json&limit={pool_size}"
+        )
+
+        try:
+            response = await asyncio.to_thread(requests.get, url, timeout=5)
+            if response.status_code == 200:
+                res_data = response.json()
+                similars = res_data.get("similartracks", {}).get("track", [])
+                if similars:
+                    chosen = random.choice(similars)
+                    mutated_tracks.append({
+                        "artist": chosen.get("artist", {}).get("name", "Unknown Artist"),
+                        "title": chosen.get("name", "Unknown Title"),
+                    })
+                    continue
+        except Exception as e:
+            logger.warning("LastFM mutate error for %s - %s: %s", artist, title, e)
+
+        mutated_tracks.append(track)
+
+    return {
+        "tracks": mutated_tracks,
+        "playlist_thesis": playlist_data.get("playlist_thesis", "music"),
+    }
+
+
+def create_radio_embed(playlist_data):
+    """Creates a Discord embed for a radio station playlist."""
+    playlist_thesis = playlist_data.get("playlist_thesis", "music")
+    if len(playlist_thesis) > 200:
+        playlist_thesis = playlist_thesis[:197] + "..."
+    embed = discord.Embed(
+        title=f"\U0001f4fb {playlist_thesis.title()} Radio Station",
+        color=discord.Color.purple(),
+    )
+
+    tracks = playlist_data.get("tracks", [])
+    for i, track in enumerate(tracks):
+        embed.add_field(
+            name=f"Track {i + 1}",
+            value=f"\U0001f3b5 {track.get('artist', '')} - {track.get('title', '')}",
+            inline=False,
+        )
+
+    return embed
+
+
+class RadioView(discord.ui.View):
+    def __init__(self, playlist_data, user_id, session_id, session_service, update_state_fn):
+        super().__init__(timeout=None)
+        self.playlist_data = playlist_data
+        self.user_id = user_id
+        self.session_id = session_id
+        self.session_service = session_service
+        self.update_state_fn = update_state_fn
+        self.abort_event = asyncio.Event()
+
+    @discord.ui.button(label="Reroll (Smooth)", style=discord.ButtonStyle.secondary, emoji="\U0001f3b2")
+    async def reroll_button_smooth(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        mutated_data = await mutate_playlist_via_lastfm(self.playlist_data, pool_size=5)
+        self.playlist_data = mutated_data
+
+        session = await self.session_service.get_session(
+            app_name="app", user_id=self.user_id, session_id=self.session_id
+        )
+        if session:
+            session.state["playlist"] = mutated_data["tracks"]
+            self.update_state_fn(self.user_id, self.session_id, {"playlist": mutated_data["tracks"]})
+
+        embed = create_radio_embed(mutated_data)
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="Reroll (Chaotic)", style=discord.ButtonStyle.secondary, emoji="\U0001f32a\ufe0f")
+    async def reroll_button_chaotic(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        mutated_data = await mutate_playlist_via_lastfm(self.playlist_data, pool_size=20)
+        self.playlist_data = mutated_data
+
+        session = await self.session_service.get_session(
+            app_name="app", user_id=self.user_id, session_id=self.session_id
+        )
+        if session:
+            session.state["playlist"] = mutated_data["tracks"]
+            self.update_state_fn(self.user_id, self.session_id, {"playlist": mutated_data["tracks"]})
+
+        embed = create_radio_embed(mutated_data)
+        await interaction.message.edit(embed=embed, view=self)
+
+    @discord.ui.button(label="Automate with DJ", style=discord.ButtonStyle.success, emoji="\U0001f399\ufe0f")
+    async def automate_dj_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.start_automation(interaction, use_dj=True)
+
+    @discord.ui.button(label="Pure Music (No DJ)", style=discord.ButtonStyle.primary, emoji="\U0001f3b5")
+    async def automate_music_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.start_automation(interaction, use_dj=False)
+
+    async def start_automation(self, interaction, use_dj):
+        # Import here to avoid circular imports
+        from bot.audio import audio_player_task, build_radio_sequence
+        from app.radio_state import set_radio_state
+
+        if not interaction.user.voice:
+            await interaction.response.send_message(
+                "\u274c You must be in a voice channel to start the broadcast!",
+                ephemeral=True,
+            )
+            return
+
+        voice_channel = interaction.user.voice.channel
+        guild_id = interaction.guild.id
+        channel_id = interaction.channel.id
+        vc = interaction.guild.voice_client
+        if vc and vc.is_connected():
+            await vc.move_to(voice_channel)
+        else:
+            vc = await voice_channel.connect()
+
+        await interaction.response.defer()
+        mode_text = "with DJ commentary" if use_dj else "in pure music mode"
+        await interaction.followup.send(
+            f"\U0001f399\ufe0f Connected to **{voice_channel.name}**. Starting the broadcast {mode_text}..."
+        )
+
+        # Populate the shared radio state
+        set_radio_state(guild_id, {
+            "active": True,
+            "playlist_thesis": self.playlist_data.get("playlist_thesis", "music"),
+            "genre": self.playlist_data.get("playlist_thesis", "music"),
+            "upcoming_tracks": list(self.playlist_data.get("tracks", [])),
+            "played_tracks": [],
+            "current_track": None,
+            "liked_tracks": [],
+            "disliked_tracks": [],
+            "mode": self.playlist_data.get("mode", "standard"),
+            "seed_tags": self.playlist_data.get("seed_tags", []),
+            "user_id": self.user_id,
+        })
+
+        audio_queue = asyncio.Queue()
+        task1 = asyncio.create_task(
+            audio_player_task(vc, audio_queue, voice_channel, self.abort_event)
+        )
+        task2 = asyncio.create_task(
+            build_radio_sequence(
+                audio_queue, use_dj, guild_id,
+                self.session_service, None,  # artifact_service passed as None, audio.py creates its own
+                channel_id, self.abort_event,
+            )
+        )
+
+        # Prevent GC
+        for task in (task1, task2):
+            task.add_done_callback(lambda t: None)
+
+
+# ---------------------------------------------------------------------------
+# Skip / Stop View (for audio playback)
+# ---------------------------------------------------------------------------
+
+class SkipView(discord.ui.View):
+    def __init__(self, vc, queue, abort_event):
+        super().__init__(timeout=None)
+        self.vc = vc
+        self.queue = queue
+        self.abort_event = abort_event
+
+    async def _ack(self, interaction):
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=True, thinking=True)
+            return True
+        except (discord.NotFound, discord.HTTPException) as e:
+            logger.warning("Could not acknowledge control interaction: %s", e)
+            return False
+
+    async def _reply(self, interaction, message):
+        try:
+            await interaction.followup.send(message, ephemeral=True)
+        except (discord.NotFound, discord.HTTPException) as e:
+            logger.warning("Could not send control reply: %s", e)
+
+    @discord.ui.button(label="Like", style=discord.ButtonStyle.secondary, emoji="👍")
+    async def like_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        acknowledged = await self._ack(interaction)
+        if not acknowledged:
+            return
+
+        guild_id = interaction.guild.id
+        from app.radio_state import active_radios, now_playing_cache
+        state = active_radios.get(guild_id)
+        if not state or not state.get("active"):
+            await self._reply(interaction, "No active radio station.")
+            return
+
+        current = now_playing_cache.get(guild_id, state.get("current_track"))
+        if not current:
+            await self._reply(interaction, "No song currently playing.")
+            return
+
+        parts = current.split(" - ", 1)
+        artist = parts[0].strip()
+        title = parts[1].strip() if len(parts) > 1 else ""
+
+        liked = state.setdefault("liked_tracks", [])
+        disliked = state.setdefault("disliked_tracks", [])
+
+        # Remove from disliked if present
+        state["disliked_tracks"] = [t for t in disliked if not (t.get("artist") == artist and t.get("title") == title)]
+
+        # Add to liked if not already present
+        if not any(t.get("artist") == artist and t.get("title") == title for t in liked):
+            liked.append({"artist": artist, "title": title})
+
+        await self._reply(interaction, f"👍 Liked '{current}'. Future tracks will favor similar selections.")
+
+    @discord.ui.button(label="Dislike", style=discord.ButtonStyle.secondary, emoji="👎")
+    async def dislike_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        acknowledged = await self._ack(interaction)
+        if not acknowledged:
+            return
+
+        guild_id = interaction.guild.id
+        from app.radio_state import active_radios, now_playing_cache
+        state = active_radios.get(guild_id)
+        if not state or not state.get("active"):
+            await self._reply(interaction, "No active radio station.")
+            return
+
+        current = now_playing_cache.get(guild_id, state.get("current_track"))
+        if not current:
+            await self._reply(interaction, "No song currently playing.")
+            return
+
+        parts = current.split(" - ", 1)
+        artist = parts[0].strip()
+        title = parts[1].strip() if len(parts) > 1 else ""
+
+        liked = state.setdefault("liked_tracks", [])
+        disliked = state.setdefault("disliked_tracks", [])
+
+        # Remove from liked if present
+        state["liked_tracks"] = [t for t in liked if not (t.get("artist") == artist and t.get("title") == title)]
+
+        # Add to disliked if not already present
+        if not any(t.get("artist") == artist and t.get("title") == title for t in disliked):
+            disliked.append({"artist": artist, "title": title})
+
+        await self._reply(interaction, f"👎 Disliked '{current}'. Future tracks by this artist or similar will be avoided.")
+
+    @discord.ui.button(label="Favorite", style=discord.ButtonStyle.secondary, emoji="💖")
+    async def favorite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        acknowledged = await self._ack(interaction)
+        if not acknowledged:
+            return
+
+        guild_id = interaction.guild.id
+        from app.radio_state import active_radios, now_playing_cache
+        state = active_radios.get(guild_id)
+        if not state or not state.get("active"):
+            await self._reply(interaction, "No active radio station.")
+            return
+
+        current = now_playing_cache.get(guild_id, state.get("current_track"))
+        if not current:
+            await self._reply(interaction, "No song currently playing.")
+            return
+
+        parts = current.split(" - ", 1)
+        artist = parts[0].strip()
+        title = parts[1].strip() if len(parts) > 1 else ""
+
+        user_id = str(interaction.user.id)
+        from bot.audio import add_user_favorite_track
+        add_user_favorite_track(user_id, artist, title)
+
+        await self._reply(interaction, f"💖 Added '{current}' to your persistent favorites list!")
+
+    @discord.ui.button(label="Skip", style=discord.ButtonStyle.danger, emoji="\u23ed\ufe0f")
+    async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        acknowledged = await self._ack(interaction)
+        if self.vc and self.vc.is_playing():
+            self.vc.stop()
+        if acknowledged:
+            await self._reply(interaction, "\u23ed\ufe0f Skipped to the next item.")
+
+    @discord.ui.button(label="Stop Station", style=discord.ButtonStyle.danger, emoji="\u23f9\ufe0f")
+    async def stop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        acknowledged = await self._ack(interaction)
+        self.abort_event.set()
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+                self.queue.task_done()
+            except Exception:
+                break
+        await self.queue.put(None)
+        if self.vc and self.vc.is_playing():
+            self.vc.stop()
+        if acknowledged:
+            await self._reply(interaction, "\u23f9\ufe0f Station stopped.")
