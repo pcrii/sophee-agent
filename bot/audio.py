@@ -422,6 +422,80 @@ async def download_song_async(query):
 
 
 # ---------------------------------------------------------------------------
+# Radio persistence helpers
+# ---------------------------------------------------------------------------
+
+async def persist_radio_state_helper(guild_id: int, session_service, channel_id: int, state: dict):
+    """Saves the current active radio state to the SQLite database session state."""
+    try:
+        user_id = state.get("user_id", "system")
+        session_id = f"discord_{channel_id}"
+        session = await session_service.get_session(
+            app_name="app", user_id=user_id, session_id=session_id
+        )
+        if session:
+            clean_state = {
+                "active": state.get("active"),
+                "playlist_thesis": state.get("playlist_thesis"),
+                "genre": state.get("genre"),
+                "upcoming_tracks": state.get("upcoming_tracks"),
+                "played_tracks": state.get("played_tracks"),
+                "current_track": state.get("current_track"),
+                "liked_tracks": state.get("liked_tracks", []),
+                "disliked_tracks": state.get("disliked_tracks", []),
+                "mode": state.get("mode"),
+                "seed_tags": state.get("seed_tags", []),
+                "user_id": user_id,
+                "voice_channel_id": state.get("voice_channel_id"),
+                "text_channel_id": state.get("text_channel_id"),
+                "use_dj": state.get("use_dj"),
+            }
+            session.state["active_radio"] = clean_state
+
+            from google.adk.events import Event, EventActions
+            import time
+            import uuid
+            dummy_event = Event(
+                timestamp=time.time(),
+                author="system",
+                invocation_id=f"rad_update_{uuid.uuid4().hex[:8]}",
+                actions=EventActions(state_delta={"active_radio": clean_state}),
+            )
+            await session_service.append_event(session, dummy_event)
+            logger.debug("Radio state persisted to database for guild %s", guild_id)
+    except Exception as e:
+        logger.warning("Failed to persist radio state for guild %s: %s", guild_id, e)
+
+
+async def clear_radio_state_helper(guild_id: int, session_service, channel_id: int):
+    """Clears the active radio state from the SQLite database session state."""
+    try:
+        session_id = f"discord_{channel_id}"
+        sessions_response = await session_service.list_sessions(app_name="app")
+        target_session = None
+        for s in sessions_response.sessions:
+            if s.id == session_id:
+                target_session = s
+                break
+
+        if target_session:
+            target_session.state["active_radio"] = None
+            from google.adk.events import Event, EventActions
+            import time
+            import uuid
+            dummy_event = Event(
+                timestamp=time.time(),
+                author="system",
+                invocation_id=f"rad_clear_{uuid.uuid4().hex[:8]}",
+                actions=EventActions(state_delta={"active_radio": None}),
+            )
+            await session_service.append_event(target_session, dummy_event)
+            logger.debug("Radio state cleared in database for guild %s", guild_id)
+    except Exception as e:
+        logger.warning("Failed to clear radio state for guild %s: %s", guild_id, e)
+
+
+# ---------------------------------------------------------------------------
 # Audio player task
 # ---------------------------------------------------------------------------
 
@@ -526,6 +600,8 @@ async def audio_player_task(vc, queue, channel, abort_event):
             now_playing_cache.pop(g_id, None)
             if g_id in active_radios:
                 active_radios[g_id]["active"] = False
+                from bot.client import session_service
+                await clear_radio_state_helper(g_id, session_service, channel.id)
 
         if vc:
             try:
@@ -804,6 +880,7 @@ async def build_radio_sequence(
             disc_channel = disc_client.get_channel(channel_id) if disc_client else None
 
             await replenish_radio_queue(state, channel=disc_channel)
+            await persist_radio_state_helper(guild_id, session_service, channel_id, state)
 
             while queue.qsize() >= 2:
                 if abort_event.is_set() or not state["active"]:
@@ -820,6 +897,7 @@ async def build_radio_sequence(
             t_curr = f"{track.get('artist')} - {track.get('title')}"
             state["current_track"] = t_curr
             i = len(state["played_tracks"]) - 1
+            await persist_radio_state_helper(guild_id, session_service, channel_id, state)
 
             # Build sliding window for playlist context
             played_recent = state["played_tracks"][-3:-1]

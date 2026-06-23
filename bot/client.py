@@ -136,6 +136,85 @@ async def on_ready():
     from bot.cache import cleanup_image_metadata
     asyncio.create_task(cleanup_image_metadata())
 
+    # Scan and resurrect active radio stations
+    async def _scan_and_resurrect():
+        try:
+            # Wait a few seconds for the client cache to populate channels
+            await asyncio.sleep(5)
+            sessions_response = await session_service.list_sessions(app_name=APP_NAME)
+            for session in sessions_response.sessions:
+                active_radio = session.state.get("active_radio")
+                if active_radio and active_radio.get("active"):
+                    logger.info("Found active radio session to resurrect: %s", session.id)
+                    asyncio.create_task(resurrect_radio_station(session, active_radio))
+        except Exception as e:
+            logger.error("Failed to resurrect active radio stations: %s", e)
+
+    asyncio.create_task(_scan_and_resurrect())
+
+
+async def resurrect_radio_station(session, active_radio):
+    """Reconnects to the voice channel and restarts player tasks to resume radio playback after bot reboot."""
+    from app.radio_state import set_radio_state, resolve_guild_id
+    from bot.audio import audio_player_task, build_radio_sequence
+    import discord
+
+    text_channel_id = active_radio.get("text_channel_id")
+    voice_channel_id = active_radio.get("voice_channel_id")
+
+    if not text_channel_id or not voice_channel_id:
+        logger.warning("Missing text/voice channel ID in active_radio state for session %s", session.id)
+        return
+
+    guild_id = resolve_guild_id(text_channel_id)
+    if not guild_id:
+        logger.warning("Could not resolve guild ID for text channel %s", text_channel_id)
+        return
+
+    # Wait for the discord client to be fully ready
+    await client.wait_until_ready()
+
+    voice_channel = client.get_channel(voice_channel_id)
+    text_channel = client.get_channel(text_channel_id)
+    if not voice_channel or not text_channel:
+        logger.warning("Could not find voice channel %s or text channel %s to resurrect.", voice_channel_id, text_channel_id)
+        return
+
+    logger.info("Resurrecting radio station in voice channel: %s", voice_channel.name)
+    try:
+        vc = await voice_channel.connect()
+    except Exception as e:
+        logger.error("Failed to reconnect to voice channel %s during resurrection: %s", voice_channel_id, e)
+        return
+
+    # Restore the in-memory state
+    active_radio["active"] = True
+    set_radio_state(guild_id, active_radio)
+
+    # Spawn player tasks
+    abort_event = asyncio.Event()
+    audio_queue = asyncio.Queue()
+    task1 = asyncio.create_task(
+        audio_player_task(vc, audio_queue, text_channel, abort_event)
+    )
+    task2 = asyncio.create_task(
+        build_radio_sequence(
+            audio_queue, active_radio.get("use_dj", False), guild_id,
+            session_service, None,
+            text_channel_id, abort_event
+        )
+    )
+
+    for task in (task1, task2):
+        task.add_done_callback(lambda t: None)
+
+    logger.info("Radio station resurrected successfully for guild %s", guild_id)
+    try:
+        await text_channel.send("📻 **System reboot detected.** Resuming your radio broadcast right where it left off!")
+    except Exception as e:
+        logger.warning("Failed to send resurrection message to text channel: %s", e)
+
+
 
 async def execute_agent_turn(
     channel,

@@ -468,7 +468,7 @@ class RadioView(discord.ui.View):
         )
 
         # Populate the shared radio state
-        set_radio_state(guild_id, {
+        state_dict = {
             "active": True,
             "playlist_thesis": self.playlist_data.get("playlist_thesis", "music"),
             "genre": self.playlist_data.get("playlist_thesis", "music"),
@@ -480,7 +480,18 @@ class RadioView(discord.ui.View):
             "mode": self.playlist_data.get("mode", "standard"),
             "seed_tags": self.playlist_data.get("seed_tags", []),
             "user_id": self.user_id,
-        })
+            "voice_channel_id": voice_channel.id,
+            "text_channel_id": channel_id,
+            "use_dj": use_dj,
+        }
+        set_radio_state(guild_id, state_dict)
+
+        # Persist to database session state
+        from bot.audio import persist_radio_state_helper
+        asyncio.create_task(
+            persist_radio_state_helper(guild_id, self.session_service, channel_id, state_dict)
+        )
+
 
         audio_queue = asyncio.Queue()
         task1 = asyncio.create_task(
