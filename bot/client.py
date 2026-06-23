@@ -263,6 +263,7 @@ async def execute_agent_turn(
                         session.state["latest_input_image"] = {
                             "data": img_b64,
                             "mime_type": part.inline_data.mime_type or "image/jpeg",
+                            "original_prompt": ref_meta.get("prompt") or "Generate an image",
                         }
                         session.state["latest_input_image_artifact"] = artifact_name
                         logger.info("Loaded reply reference image from artifact: %s", artifact_name)

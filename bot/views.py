@@ -197,6 +197,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                             state_updates["latest_input_image"] = {
                                 "data": img_b64,
                                 "mime_type": part.inline_data.mime_type or "image/jpeg",
+                                "original_prompt": original_prompt or "Generate an image",
                             }
                             state_updates["latest_input_image_artifact"] = image_artifact
                             logger.info("Loaded reference image for edit from artifact: %s", image_artifact)
