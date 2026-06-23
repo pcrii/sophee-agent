@@ -592,6 +592,14 @@ async def on_message(message: discord.Message):
             if result:
                 image_data = result
                 break
+    elif message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message):
+        ref_msg = message.reference.resolved
+        if ref_msg.attachments:
+            for attachment in ref_msg.attachments:
+                result = await read_image_attachment(attachment)
+                if result:
+                    image_data = result
+                    break
 
     try:
         await execute_agent_turn(
