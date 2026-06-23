@@ -94,32 +94,26 @@ async def get_or_create_session(user_id: str, session_id: str):
     return session
 
 
-def update_session_state(user_id: str, session_id: str, updates: dict):
-    """Synchronous helper to update session state directly.
+async def update_session_state(user_id: str, session_id: str, updates: dict):
+    """Async helper to update session state directly and persist it.
     Used by views/modals that need to set state before running the agent.
     """
-    async def _update():
-        session = await session_service.get_session(
-            app_name=APP_NAME, user_id=user_id, session_id=session_id
+    session = await session_service.get_session(
+        app_name=APP_NAME, user_id=user_id, session_id=session_id
+    )
+    if session:
+        session.state.update(updates)
+        # Persist state changes via a dummy system event
+        from google.adk.events import Event, EventActions
+        import time
+        import uuid
+        dummy_event = Event(
+            timestamp=time.time(),
+            author="system",
+            invocation_id=f"state_update_{uuid.uuid4().hex[:8]}",
+            actions=EventActions(state_delta=updates),
         )
-        if session:
-            session.state.update(updates)
-            # Persist state changes via a dummy system event
-            from google.adk.events import Event, EventActions
-            import time
-            import uuid
-            dummy_event = Event(
-                timestamp=time.time(),
-                author="system",
-                invocation_id=f"state_update_{uuid.uuid4().hex[:8]}",
-                actions=EventActions(state_delta=updates),
-            )
-            await session_service.append_event(session, dummy_event)
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_update())
-    except RuntimeError:
-        asyncio.run(_update())
+        await session_service.append_event(session, dummy_event)
 
 
 # ---------------------------------------------------------------------------

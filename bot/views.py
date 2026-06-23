@@ -166,7 +166,7 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
                     except Exception as e:
                         logger.error("Failed to load reference image artifact %s for edit: %s", image_artifact, e)
 
-            self.update_state_fn(self.user_id, self.session_id, state_updates)
+            await self.update_state_fn(self.user_id, self.session_id, state_updates)
 
             if original_prompt:
                 edit_prompt = f"Please modify the image created by prompt '{original_prompt}' based on this request: {self.prompt_input.value}"
@@ -238,7 +238,7 @@ class ImageView(discord.ui.View):
             original_prompt = ""
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
-                self.update_state_fn(self.user_id, self.session_id, {
+                await self.update_state_fn(self.user_id, self.session_id, {
                     "rolled_style": ref_meta.get("style"),
                     "latest_resolution": ref_meta.get("resolution"),
                     "force_style_roll": False,
@@ -246,7 +246,7 @@ class ImageView(discord.ui.View):
                     "latest_input_image": None,
                 })
             else:
-                self.update_state_fn(self.user_id, self.session_id, {
+                await self.update_state_fn(self.user_id, self.session_id, {
                     "force_style_roll": False,
                     "start_fresh_image": True,
                     "latest_input_image": None,
@@ -261,7 +261,7 @@ class ImageView(discord.ui.View):
                 self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
             )
 
-            self.update_state_fn(self.user_id, self.session_id, {
+            await self.update_state_fn(self.user_id, self.session_id, {
                 "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
             })
 
@@ -300,7 +300,7 @@ class ImageView(discord.ui.View):
             original_prompt = ""
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
-                self.update_state_fn(self.user_id, self.session_id, {
+                await self.update_state_fn(self.user_id, self.session_id, {
                     "rolled_style": ref_meta.get("style"),
                     "latest_resolution": ref_meta.get("resolution"),
                     "force_style_roll": True,
@@ -309,7 +309,7 @@ class ImageView(discord.ui.View):
                     "latest_input_image": None,
                 })
             else:
-                self.update_state_fn(self.user_id, self.session_id, {
+                await self.update_state_fn(self.user_id, self.session_id, {
                     "force_style_roll": True, "art_director_mode": "simple", "start_fresh_image": False, "latest_input_image": None,
                 })
 
@@ -322,7 +322,7 @@ class ImageView(discord.ui.View):
                 self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
             )
 
-            self.update_state_fn(self.user_id, self.session_id, {
+            await self.update_state_fn(self.user_id, self.session_id, {
                 "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
             })
 
@@ -437,7 +437,7 @@ class RadioView(discord.ui.View):
         )
         if session:
             session.state["playlist"] = mutated_data["tracks"]
-            self.update_state_fn(self.user_id, self.session_id, {"playlist": mutated_data["tracks"]})
+            await self.update_state_fn(self.user_id, self.session_id, {"playlist": mutated_data["tracks"]})
 
         embed = create_radio_embed(mutated_data)
         await interaction.message.edit(embed=embed, view=self)
@@ -453,7 +453,7 @@ class RadioView(discord.ui.View):
         )
         if session:
             session.state["playlist"] = mutated_data["tracks"]
-            self.update_state_fn(self.user_id, self.session_id, {"playlist": mutated_data["tracks"]})
+            await self.update_state_fn(self.user_id, self.session_id, {"playlist": mutated_data["tracks"]})
 
         embed = create_radio_embed(mutated_data)
         await interaction.message.edit(embed=embed, view=self)
