@@ -8,7 +8,7 @@ logger = logging.getLogger("sophee.app.fastapi")
 
 def create_app():
     """Creates and configures the FastAPI application."""
-    from google.adk.cli import get_fast_api_app
+    from google.adk.cli.fast_api import get_fast_api_app
     from google.adk.artifacts import InMemoryArtifactService
     from google.adk.sessions import DatabaseSessionService
 
