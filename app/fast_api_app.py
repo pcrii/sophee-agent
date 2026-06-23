@@ -1,53 +1,61 @@
-"""FastAPI server for the ADK web interface."""
+"""FastAPI server for the Sophee agent API."""
 
 import logging
 import os
+from fastapi import FastAPI
+from pydantic import BaseModel
 
 logger = logging.getLogger("sophee.app.fastapi")
 
 
+class ChatRequest(BaseModel):
+    user_id: str
+    session_id: str
+    message: str
+
+
 def create_app():
     """Creates and configures the FastAPI application."""
-    from google.adk.cli.fast_api import get_fast_api_app
     from google.adk.artifacts import InMemoryArtifactService
     from google.adk.sessions import DatabaseSessionService
-
+    from google.adk.runners import Runner
     from app.agent import root_agent
-    from app.app_utils.typing import Feedback
 
-    # Configure GCP logging if available
-    try:
-        import google.cloud.logging
-        client = google.cloud.logging.Client()
-        client.setup_logging()
-        logger.info("GCP logging configured")
-    except Exception:
-        logging.basicConfig(level=logging.INFO)
-        logger.info("Using standard Python logging")
+    app = FastAPI(title="Sophee Agent API")
 
     session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
     artifact_service = InMemoryArtifactService()
 
-    # Check for GCS artifact storage
-    logs_bucket = os.getenv("LOGS_BUCKET_NAME")
-    if logs_bucket:
-        try:
-            from google.adk.artifacts import GcsArtifactService
-            artifact_service = GcsArtifactService(bucket_name=logs_bucket)
-            logger.info("Using GCS artifact storage: %s", logs_bucket)
-        except Exception as e:
-            logger.warning("GCS artifact service unavailable, using in-memory: %s", e)
-
-    app = get_fast_api_app(
+    runner = Runner(
         agent=root_agent,
+        app_name="app",
         session_service=session_service,
         artifact_service=artifact_service,
     )
 
-    @app.post("/feedback")
-    async def collect_feedback(feedback: Feedback):
-        logger.info("Feedback received: score=%s, text=%s", feedback.score, feedback.text)
-        return {"status": "ok"}
+    @app.post("/api/chat")
+    async def chat(request: ChatRequest):
+        """Send a message to the agent and get the text response."""
+        from google.genai import types
+        response_text = ""
+        try:
+            new_msg = types.Content(role="user", parts=[types.Part.from_text(text=request.message)])
+            async for event in runner.run_async(
+                user_id=request.user_id,
+                session_id=request.session_id,
+                new_message=new_msg,
+            ):
+                if event.is_final_response():
+                    response_parts = (
+                        event.content.parts
+                        if (event.content and event.content.parts)
+                        else []
+                    )
+                    response_text += "".join([p.text for p in response_parts if p.text])
+            return {"status": "success", "response": response_text}
+        except Exception as e:
+            logger.exception("Error during API chat invocation:")
+            return {"status": "error", "message": str(e)}
 
     @app.get("/api/suggestions")
     async def get_suggestions():
@@ -83,7 +91,6 @@ def create_app():
             return {"status": "error", "message": str(e)}
 
     return app
-
 
 
 if __name__ == "__main__":
