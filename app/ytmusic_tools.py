@@ -321,14 +321,17 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
         logger.error(f"YTMusic load playlist error: {e}")
         return {"status": "error", "message": str(e)}
 
-async def get_ytmusic_library_playlists(tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
-    """Fetches the user's personal YouTube Music library playlists.
+async def search_ytmusic_library_playlists(query: str, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
+    """Searches the user's personal YouTube Music library for playlists matching a keyword.
     Requires OAuth authentication.
     
+    Args:
+        query: The keyword to search for in the user's library playlists.
+        
     Returns:
-        A dictionary containing the user's playlists.
+        A dictionary containing matching playlists.
     """
-    logger.info("YTMusic get library playlists")
+    logger.info(f"YTMusic search library playlists for: {query}")
     try:
         if not tool_context or not tool_context.session or not tool_context.session.user_id:
             return {"status": "error", "message": "Could not determine your user ID to fetch playlists."}
@@ -340,18 +343,18 @@ async def get_ytmusic_library_playlists(tool_context: Optional[ToolContext] = No
         if not user_yt:
             return {"status": "error", "message": "You have not linked your YouTube Music account. Type `!ytlogin` in Discord to securely log in."}
             
-        playlists_res = await asyncio.to_thread(user_yt.get_library_playlists, 50)
+        playlists_res = await asyncio.to_thread(user_yt.search, query, filter="playlists", scope="library")
         
         playlists = []
-        for pl in playlists_res:
+        for pl in playlists_res[:10]:
             playlists.append({
                 "title": pl.get("title"),
-                "playlistId": pl.get("playlistId"),
-                "count": pl.get("count", "Unknown")
+                "playlistId": pl.get("playlistId")
             })
             
         return {
             "status": "success",
+            "query": query,
             "playlists": playlists
         }
     except Exception as e:

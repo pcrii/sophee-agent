@@ -72,7 +72,7 @@ from app.ytmusic_tools import (
     get_ytmusic_charts,
     get_ytmusic_mood_playlists,
     load_ytmusic_playlist,
-    get_ytmusic_library_playlists,
+    search_ytmusic_library_playlists,
 )
 from app.adventure_tools import (
     start_adventure,
@@ -145,7 +145,7 @@ _ytmusic_tools = [
     get_ytmusic_charts,
     get_ytmusic_mood_playlists,
     load_ytmusic_playlist,
-    get_ytmusic_library_playlists,
+    search_ytmusic_library_playlists,
 ]
 
 
