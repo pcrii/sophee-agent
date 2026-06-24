@@ -24,3 +24,8 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# YouTube Music Auth
+headers_auth.json
+
+oauth.json

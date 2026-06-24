@@ -692,15 +692,41 @@ async def on_message(message: discord.Message):
     # Process message content
     msg_text = message.content.replace(f"<@{client.user.id}>", "").strip()
     
-    # Intercept !ytlogin
-    if msg_text.lower() == "!ytlogin":
-        from app.auth import start_oauth_flow
-        # We need an interaction to reply with ephemeral messages, but we only have a message here.
-        # Since we cannot reply ephemerally to a message without an interaction, we will send a DM, or just a regular message if DM fails.
-        # Actually, let's create a button view that users can click to start the interaction.
-        from bot.views import YTLoginButtonView
-        await message.reply("Click the button below to link your YouTube Music account securely.", view=YTLoginButtonView())
+    if msg_text.lower() == "!reset":
+        try:
+            session_id = f"discord_{message.channel.id}"
+            user_id = str(message.author.id)
+            
+            # Attempt to fetch the session first to clear any persistent user state
+            try:
+                session = await session_service.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+                if session:
+                    # Clear persistent user state keys
+                    keys_to_delete = [k for k in session.state.keys() if k.startswith("user:")]
+                    if keys_to_delete:
+                        from google.adk.events import Event, EventActions
+                        import time, uuid
+                        dummy_event = Event(
+                            timestamp=time.time(),
+                            author="system",
+                            invocation_id=f"state_wipe_{uuid.uuid4().hex[:8]}",
+                            actions=EventActions(
+                                state_delta={k: None for k in keys_to_delete}
+                            ),
+                        )
+                        await session_service.append_event(session, dummy_event)
+            except Exception:
+                pass
+                
+            # Delete the session to clear history
+            await session_service.delete_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+            await message.reply("🔄 Conversation history and agent state have been completely flushed!")
+        except Exception as e:
+            logger.exception("Error resetting session:")
+            await message.reply(f"Failed to reset session: {e}")
         return
+    
+
 
     # Process image attachments
     image_data = None
