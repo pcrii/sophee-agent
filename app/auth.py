@@ -17,7 +17,14 @@ def get_ytm_client(user_id: str | int) -> Optional[YTMusic]:
     filepath = os.path.join(AUTH_DIR, f"{user_id}_oauth.json")
     if os.path.exists(filepath):
         try:
-            return YTMusic(filepath)
+            client_id = os.environ.get("YOUTUBE_CLIENT_ID")
+            client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET")
+            if client_id and client_secret:
+                import requests
+                creds = OAuthCredentials(client_id, client_secret, requests.Session())
+                return YTMusic(filepath, oauth_credentials=creds)
+            else:
+                return YTMusic(filepath)
         except Exception as e:
             logger.error(f"Failed to load YTMusic for user {user_id}: {e}")
     return None
@@ -44,8 +51,29 @@ async def start_oauth_flow(user_id: str | int, interaction: discord.Interaction)
         await interaction.edit_original_response(content=f"🔗 **Link your YouTube Music Account**\n\n1. Go to this link: {url}\n2. Enter the code: **`{code['user_code']}`**\n3. Follow the Google prompts to authorize the bot.\n\n*Waiting for you to complete authorization...* (This will time out in a few minutes)")
         
         # Block and poll in a thread
-        raw_token = await asyncio.to_thread(creds.token_from_code, code["device_code"])
+        import time
+        interval = code.get("interval", 5)
+        expires_in = code.get("expires_in", 1800)
+        start_time = time.time()
         
+        raw_token = None
+        while time.time() - start_time < expires_in:
+            await asyncio.sleep(interval)
+            try:
+                res = await asyncio.to_thread(creds.token_from_code, code["device_code"])
+                if "error" not in res:
+                    raw_token = res
+                    break
+                elif res.get("error") != "authorization_pending":
+                    # Some other error like expired token
+                    logger.debug(f"OAuth poll error: {res}")
+            except Exception as e:
+                logger.debug(f"OAuth poll exception: {e}")
+                
+        if not raw_token:
+            await interaction.followup.send("❌ **Login timed out or was cancelled.** Please try `!ytlogin` again.", ephemeral=True)
+            return
+            
         # Save it
         filepath = os.path.join(AUTH_DIR, f"{user_id}_oauth.json")
         with open(filepath, "w") as f:
