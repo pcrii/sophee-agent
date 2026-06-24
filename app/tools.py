@@ -1115,7 +1115,8 @@ Ensure the divider "#### TRANSCRIPT" is used exactly as written before the spoke
 # ---------------------------------------------------------------------------
 
 async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = "0.5k") -> dict:
-    """Generates a high-quality image based on a detailed text prompt.
+    """Generates OR edits a high-quality image based on a detailed text prompt.
+    If the user uploads an image or requests an edit, ALWAYS use this tool. The tool will automatically use their latest image as the reference for the edit.
     Saves the output image to the user's artifacts (persistent across sessions).
 
     Args:
