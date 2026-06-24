@@ -4,4 +4,5 @@ These rules apply to the Antigravity agent (the AI coding assistant) when writin
 
 
 - **DEPLOYMENT ENVIRONMENT**: The code is run on a Raspberry Pi with a FastAPI server running on it. Keep this environment in mind for performance, dependency management, and architecture.
+- **REMOTE DATA**: The application runs live on the Pi (IP: `192.168.1.225`). Do NOT rely on local data files (e.g., `data/suggestion_box.md` or logs) for runtime state. Always fetch live data by using the `read_url_content` tool to hit the FastAPI endpoints (e.g., `http://192.168.1.225:8000/api/suggestions`, `/api/favorites`, `/api/debug/logs`, `/api/debug/sessions`).
 
