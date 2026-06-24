@@ -57,6 +57,7 @@ async def start_oauth_flow(user_id: str | int, interaction: discord.Interaction)
         start_time = time.time()
         
         raw_token = None
+        error_msg = None
         while time.time() - start_time < expires_in:
             await asyncio.sleep(interval)
             try:
@@ -66,12 +67,15 @@ async def start_oauth_flow(user_id: str | int, interaction: discord.Interaction)
                     break
                 elif res.get("error") != "authorization_pending":
                     # Some other error like expired token
-                    logger.debug(f"OAuth poll error: {res}")
+                    error_msg = res.get("error")
+                    break
             except Exception as e:
-                logger.debug(f"OAuth poll exception: {e}")
+                error_msg = str(e)
+                break
                 
         if not raw_token:
-            await interaction.followup.send("❌ **Login timed out or was cancelled.** Please try `!ytlogin` again.", ephemeral=True)
+            reason = error_msg if error_msg else "timed out"
+            await interaction.followup.send(f"❌ **Login failed.** ({reason})\n\nIf the error mentions 'YouTubeData API', you must enable the **YouTube Data API v3** in your Google Cloud Console.", ephemeral=True)
             return
             
         # Save it
