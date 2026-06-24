@@ -1031,7 +1031,10 @@ async def build_radio_sequence(
 
                         await queue.put((temp_file_path, label))
 
-            s_file, report = await download_song_async(t_curr)
+            # Use videoId if available, otherwise fallback to artist-title search
+            vid = track.get("videoId")
+            query = f"https://music.youtube.com/watch?v={vid}" if vid else t_curr
+            s_file, report = await download_song_async(query)
             if s_file:
                 await queue.put((s_file, t_curr, report))
         except Exception as loop_err:

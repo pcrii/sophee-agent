@@ -142,7 +142,7 @@ async def remove_from_queue(index: int, tool_context: ToolContext) -> dict:
     }
 
 
-async def add_to_queue(artist: str, title: str, tool_context: ToolContext, play_next: bool = False) -> dict:
+async def add_to_queue(artist: str, title: str, tool_context: ToolContext, play_next: bool = False, video_id: str = None) -> dict:
     """Adds a track (artist and title) to the upcoming queue.
     Use this when the user requests to add, queue up, or append a specific track.
     Set play_next to true when the user says "play this next", "put this on next",
@@ -153,6 +153,7 @@ async def add_to_queue(artist: str, title: str, tool_context: ToolContext, play_
         title: The title of the song.
         play_next: If true, inserts at the top of the queue so it plays next.
                    If false (default), appends to the end of the queue.
+        video_id: Optional YouTube videoId for the exact track audio. Provide this if you obtained it from search_ytmusic_track.
 
     Returns:
         A success message with the track details and position.
@@ -165,6 +166,9 @@ async def add_to_queue(artist: str, title: str, tool_context: ToolContext, play_
         }
 
     new_track = {"artist": artist, "title": title}
+    if video_id:
+        new_track["videoId"] = video_id
+        
     upcoming = state.setdefault("upcoming_tracks", [])
 
     if play_next:

@@ -79,7 +79,7 @@ async def generate_ytmusic_radio(video_id: str, tool_context: Optional[ToolConte
         video_id: The unique videoId of the seed track (obtainable via search_ytmusic_track).
 
     Returns:
-        A dictionary containing the generated radio tracks.
+        A dictionary containing the generated radio tracks and the playlist_url. You MUST include the playlist_url in your response to the user so it embeds the playlist!
     """
     logger.info(f"YTMusic generate radio for videoId: {video_id}")
     try:
@@ -100,6 +100,7 @@ async def generate_ytmusic_radio(video_id: str, tool_context: Optional[ToolConte
         return {
             "status": "success",
             "seed_videoId": video_id,
+            "playlist_url": f"https://music.youtube.com/watch?v={video_id}&list=RDAMVM{video_id}",
             "tracks": tracks
         }
     except Exception as e:
