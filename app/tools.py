@@ -1114,7 +1114,7 @@ Ensure the divider "#### TRANSCRIPT" is used exactly as written before the spoke
 # Image Generation
 # ---------------------------------------------------------------------------
 
-async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = "0.5k", edit_mode: str = "inpainting") -> dict:
+async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = "0.5k", edit_mode: str = "inpainting", enable_search_grounding: bool = False) -> dict:
     """Generates OR edits a high-quality image based on a detailed text prompt.
     If the user uploads an image or requests an edit, ALWAYS use this tool. The tool will automatically use their latest image as the reference for the edit.
     Saves the output image to the user's artifacts (persistent across sessions).
@@ -1125,6 +1125,7 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
                     - '0.5k' (default, generates a 512x512 image)
                     - '1k' (generates a 1024x1024 image)
         edit_mode: If editing an existing image, use 'inpainting' (default) to modify specific elements while keeping the rest exactly the same, or 'style_transfer' to generate a new image inspired by the old one's composition but with a completely new style or subject.
+        enable_search_grounding: If true, enables Grounding with Google Search (both Web and Image Search). Use this when the prompt asks for real-world entities, recent events, specific stock charts, real-time data, or highly accurate visual subjects that benefit from internet search context.
 
     Returns:
         A dictionary containing the generated image's artifact name.
@@ -1181,13 +1182,6 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
                 "api": "interactions"
             }
             
-        import json
-        debug_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_payload.json")
-        try:
-            with open(debug_path, "w") as f:
-                json.dump(debug_info, f)
-        except Exception:
-            pass
 
         # Map resolution to the model's native image_size string
         api_image_size = "512"
@@ -1201,12 +1195,29 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             "image_size": api_image_size
         }
 
+        kwargs = {
+            "model": "gemini-3.1-flash-image",
+            "input": input_data,
+            "response_format": response_format,
+        }
+        
+        if enable_search_grounding:
+            kwargs["tools"] = [{
+                "type": "google_search",
+                "search_types": ["web_search", "image_search"]
+            }]
+            debug_info["grounding_enabled"] = True
+
+        import json
+        debug_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_payload.json")
         try:
-            interaction = await client.aio.interactions.create(
-                model="gemini-3.1-flash-image",
-                input=input_data,
-                response_format=response_format,
-            )
+            with open(debug_path, "w") as f:
+                json.dump(debug_info, f)
+        except Exception:
+            pass
+
+        try:
+            interaction = await client.aio.interactions.create(**kwargs)
             
             # The interactions API exposes the output image cleanly on interaction.output_image
             generated_image = interaction.output_image
