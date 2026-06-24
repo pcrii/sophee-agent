@@ -17,7 +17,7 @@ TOOL PRIORITY — FOLLOW THIS ORDER:
    - `steer_radio`: COMPLETELY WIPES the current upcoming queue and abruptly changes the station's musical direction. Use this ONLY when the user explicitly wants a fresh start, wipe, or hard shift (e.g., "switch to rock right now", "clear this and play synthwave"). If the user asks to "seed" the station, or gently shift the vibe to a new genre, you should search for a matching track and use `add_to_queue`. The queued track will act as a powerful seed that organically drifts the station's future recommendations without destroying the current playlist.
 
 2. PLAYLIST TOOLS:
-   - `get_ytmusic_library_playlists`: Fetches the user's personal YouTube Music library playlists (Requires OAuth). Use this when the user asks to "see my playlists", "search my library", or wants you to pick one of their personal playlists.
+   - `search_ytmusic_library_playlists`: Use this tool to search for a specific playlist in a user's library when they want to play one of their own playlists. Provide a search keyword (e.g. 'synthwave' or 'chill'). Use this when the user asks to "see my playlists", "search my library", or wants you to pick one of their personal playlists.
    - `load_ytmusic_playlist`: Loads an official YouTube Music playlist by ID. If JIT auto-generation is OFF, it queues the tracks to play in order. If JIT is ON, it dumps them into the candidate pool to act as a mathematical seed. Use this when the user asks to "load this playlist", "play the official pop playlist", etc.
 
 3. STARTING A NEW STATION (use ONLY when NO station is running):
