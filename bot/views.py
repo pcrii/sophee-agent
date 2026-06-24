@@ -647,16 +647,18 @@ class SkipView(discord.ui.View):
             
         # YouTube Music Sync
         try:
-            from app.ytmusic_tools import search_ytmusic_track, yt, OAUTH_FILE
-            import os
+            from app.ytmusic_tools import search_ytmusic_track
+            from app.auth import get_ytm_client
             import asyncio
-            if os.path.exists(OAUTH_FILE):
+            
+            user_yt = get_ytm_client(interaction.user.id)
+            if user_yt:
                 track = await search_ytmusic_track(current)
                 if track and track.get("videoId"):
-                    await asyncio.to_thread(yt.rate_song, track["videoId"], "LIKE")
+                    await asyncio.to_thread(user_yt.rate_song, track["videoId"], "LIKE")
         except Exception as e:
             from bot.audio import logger
-            logger.warning(f"Failed to sync LIKE to YouTube Music: {e}")
+            logger.warning(f"Failed to sync LIKE to YouTube Music for user {interaction.user.id}: {e}")
 
         await self._reply(interaction, f"👍 Liked '{current}'. Future tracks will favor similar selections.")
 
@@ -694,16 +696,18 @@ class SkipView(discord.ui.View):
             
         # YouTube Music Sync
         try:
-            from app.ytmusic_tools import search_ytmusic_track, yt, OAUTH_FILE
-            import os
+            from app.ytmusic_tools import search_ytmusic_track
+            from app.auth import get_ytm_client
             import asyncio
-            if os.path.exists(OAUTH_FILE):
+            
+            user_yt = get_ytm_client(interaction.user.id)
+            if user_yt:
                 track = await search_ytmusic_track(current)
                 if track and track.get("videoId"):
-                    await asyncio.to_thread(yt.rate_song, track["videoId"], "DISLIKE")
+                    await asyncio.to_thread(user_yt.rate_song, track["videoId"], "DISLIKE")
         except Exception as e:
             from bot.audio import logger
-            logger.warning(f"Failed to sync DISLIKE to YouTube Music: {e}")
+            logger.warning(f"Failed to sync DISLIKE to YouTube Music for user {interaction.user.id}: {e}")
 
         await self._reply(interaction, f"👎 Disliked '{current}'. Future tracks by this artist or similar will be avoided.")
 
@@ -834,6 +838,15 @@ class RadioSettingsView(discord.ui.View):
         await interaction.followup.send(f"JIT Auto-Generation is now {'ON' if new_val else 'OFF'}.", ephemeral=True)
 
 
+
+class YTLoginButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        
+    @discord.ui.button(label="Link YouTube Music", style=discord.ButtonStyle.primary, emoji="🔗")
+    async def login_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from app.auth import start_oauth_flow
+        await start_oauth_flow(interaction.user.id, interaction)
 
 class AdventureView(discord.ui.View):
     """View containing interactive buttons for choices presented during an adventure."""

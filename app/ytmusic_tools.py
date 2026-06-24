@@ -12,14 +12,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Initialize a global client (auth if oauth.json exists)
-OAUTH_FILE = "oauth.json"
-if os.path.exists(OAUTH_FILE):
-    yt = YTMusic(OAUTH_FILE)
-    logger.info("YTMusic authenticated via oauth.json")
-else:
-    yt = YTMusic()
-    logger.info("YTMusic using unauthenticated client")
+# Initialize a global client (unauthenticated for public searches)
+yt = YTMusic()
 
 def _extract_video_id(url: str) -> Optional[str]:
     """Extracts a YouTube videoId from standard youtube URLs."""
@@ -336,11 +330,17 @@ async def get_ytmusic_library_playlists(tool_context: Optional[ToolContext] = No
     """
     logger.info("YTMusic get library playlists")
     try:
-        # Check if auth works
-        if not os.path.exists(OAUTH_FILE):
-            return {"status": "error", "message": "Bot is not authenticated. Please run auth_ytmusic.py first."}
+        if not tool_context or not tool_context.session or not tool_context.session.user_id:
+            return {"status": "error", "message": "Could not determine your user ID to fetch playlists."}
             
-        playlists_res = await asyncio.to_thread(yt.get_library_playlists, 50)
+        user_id = tool_context.session.user_id
+        from app.auth import get_ytm_client
+        user_yt = get_ytm_client(user_id)
+        
+        if not user_yt:
+            return {"status": "error", "message": "You have not linked your YouTube Music account. Type `!ytlogin` in Discord to securely log in."}
+            
+        playlists_res = await asyncio.to_thread(user_yt.get_library_playlists, 50)
         
         playlists = []
         for pl in playlists_res:

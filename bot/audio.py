@@ -545,20 +545,27 @@ async def audio_player_task(vc, queue, channel, abort_event):
                         now_playing_cache[channel.guild.id] = label
                         
                         # Background Scrobbling
-                        async def _scrobble(song_label: str):
+                        async def _scrobble(song_label: str, guild_id: int):
                             try:
-                                from app.ytmusic_tools import search_ytmusic_track, yt, OAUTH_FILE
-                                import os
-                                if os.path.exists(OAUTH_FILE):
+                                from app.ytmusic_tools import search_ytmusic_track
+                                from app.auth import get_ytm_client
+                                from app.radio_state import active_radios
+                                
+                                state = active_radios.get(guild_id)
+                                if not state:
+                                    return
+                                host_id = state.get("user_id")
+                                user_yt = get_ytm_client(host_id)
+                                if user_yt:
                                     track = await search_ytmusic_track(song_label)
                                     if track and track.get("videoId"):
-                                        song_data = await asyncio.to_thread(yt.get_song, track["videoId"])
-                                        await asyncio.to_thread(yt.add_history_item, song_data)
-                                        logger.info(f"Scrobbled '{song_label}' to YouTube Music history.")
+                                        song_data = await asyncio.to_thread(user_yt.get_song, track["videoId"])
+                                        await asyncio.to_thread(user_yt.add_history_item, song_data)
+                                        logger.info(f"Scrobbled '{song_label}' to Host {host_id}'s YouTube Music history.")
                             except Exception as scrobble_err:
                                 logger.warning(f"Failed to scrobble {song_label}: {scrobble_err}")
                                 
-                        asyncio.create_task(_scrobble(label))
+                        asyncio.create_task(_scrobble(label, channel.guild.id))
 
                     # Update voice channel status for songs (not TTS segments)
                     if "tts_cache" not in file_path and "artifacts" not in file_path:

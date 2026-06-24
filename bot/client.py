@@ -691,6 +691,16 @@ async def on_message(message: discord.Message):
 
     # Process message content
     msg_text = message.content.replace(f"<@{client.user.id}>", "").strip()
+    
+    # Intercept !ytlogin
+    if msg_text.lower() == "!ytlogin":
+        from app.auth import start_oauth_flow
+        # We need an interaction to reply with ephemeral messages, but we only have a message here.
+        # Since we cannot reply ephemerally to a message without an interaction, we will send a DM, or just a regular message if DM fails.
+        # Actually, let's create a button view that users can click to start the interaction.
+        from bot.views import YTLoginButtonView
+        await message.reply("Click the button below to link your YouTube Music account securely.", view=YTLoginButtonView())
+        return
 
     # Process image attachments
     image_data = None
