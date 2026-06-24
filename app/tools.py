@@ -1166,7 +1166,6 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             }
             
         import json
-        import os
         debug_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_payload.json")
         try:
             with open(debug_path, "w") as f:
