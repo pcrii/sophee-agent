@@ -1140,21 +1140,27 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         # Check if there is a cached reference image in session state
         latest_img = tool_context.state.get("latest_input_image")
         if latest_img:
+            # The Interactions API requires explicit "semantic masking" phrasing to edit an image 
+            # rather than use it as a loose structural reference.
+            edit_prompt = (
+                f"Using the provided image, perform the following edit: '{prompt}'. "
+                "Keep everything else in the image exactly the same, preserving the original style, lighting, and composition."
+            )
             raw_bytes = base64.b64decode(latest_img["data"])
             # Use the documented Interactions API payload for image editing
             input_data = [
                 {
-                    "type": "text",
-                    "text": prompt
-                },
-                {
                     "type": "image",
                     "data": base64.b64encode(raw_bytes).decode("utf-8"),
                     "mime_type": latest_img["mime_type"]
+                },
+                {
+                    "type": "text",
+                    "text": edit_prompt
                 }
             ]
             debug_info = {
-                "prompt": prompt,
+                "prompt": edit_prompt,
                 "has_image": True,
                 "mime_type": latest_img["mime_type"],
                 "image_bytes_length": len(raw_bytes),
