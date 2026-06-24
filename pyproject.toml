@@ -12,6 +12,7 @@ dependencies = [
     "PyNaCl",
     "python-dotenv",
     "aiosqlite",
+    "ytmusicapi",
 ]
 
 [project.optional-dependencies]

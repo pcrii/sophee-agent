@@ -64,6 +64,12 @@ from app.musicbrainz_tools import (
     get_musicbrainz_artist_releases,
     get_musicbrainz_artist_relationships,
 )
+from app.ytmusic_tools import (
+    search_ytmusic_track,
+    search_ytmusic_artist,
+    generate_ytmusic_radio,
+    get_ytmusic_similar_artists,
+)
 from app.adventure_tools import (
     start_adventure,
     update_adventure_state,
@@ -126,6 +132,14 @@ _musicbrainz_tools = [
     get_musicbrainz_artist_relationships,
 ]
 
+# YouTube Music recommendation algorithms and fuzzy search
+_ytmusic_tools = [
+    search_ytmusic_track,
+    search_ytmusic_artist,
+    generate_ytmusic_radio,
+    get_ytmusic_similar_artists,
+]
+
 
 # ---------------------------------------------------------------------------
 # Sub-Agents
@@ -156,6 +170,7 @@ dj_agent = Agent(
         get_trending_tracks,
         get_trending_artists,
         *_musicbrainz_tools,
+        *_ytmusic_tools,
         *_user_tools,
     ],
 )
@@ -186,6 +201,7 @@ music_expert = Agent(
         get_trending_tracks,
         get_trending_artists,
         *_musicbrainz_tools,
+        *_ytmusic_tools,
         # User interaction & Memory
         *_user_tools,
     ],
