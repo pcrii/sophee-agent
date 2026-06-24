@@ -1140,32 +1140,15 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         latest_img = tool_context.state.get("latest_input_image")
         if latest_img:
             raw_bytes = base64.b64decode(latest_img["data"])
-            original_prompt = latest_img.get("original_prompt") or "Generate an image"
-            dummy_sig = "context_engineering_is_the_way_to_go".encode("utf-8")
+            # Pass the text prompt and the reference image in a single turn, 
+            # which is the correct way to perform image-to-image editing in the API.
             input_data = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=original_prompt)]
-                ),
-                types.Content(
-                    role="model",
-                    parts=[
-                        types.Part(
-                            text="Generating original image.",
-                            thought_signature=dummy_sig
-                        ),
-                        types.Part(
-                            inline_data=types.Blob(
-                                mime_type=latest_img["mime_type"],
-                                data=raw_bytes,
-                            ),
-                            thought_signature=dummy_sig
-                        )
-                    ]
-                ),
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
+                prompt,
+                types.Part(
+                    inline_data=types.Blob(
+                        mime_type=latest_img["mime_type"],
+                        data=raw_bytes,
+                    )
                 )
             ]
         else:
