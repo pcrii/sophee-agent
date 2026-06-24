@@ -1114,7 +1114,7 @@ Ensure the divider "#### TRANSCRIPT" is used exactly as written before the spoke
 # Image Generation
 # ---------------------------------------------------------------------------
 
-async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = "0.5k") -> dict:
+async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = "0.5k", edit_mode: str = "inpainting") -> dict:
     """Generates OR edits a high-quality image based on a detailed text prompt.
     If the user uploads an image or requests an edit, ALWAYS use this tool. The tool will automatically use their latest image as the reference for the edit.
     Saves the output image to the user's artifacts (persistent across sessions).
@@ -1124,6 +1124,7 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         resolution: The resolution of the image to generate. Supported values:
                     - '0.5k' (default, generates a 512x512 image)
                     - '1k' (generates a 1024x1024 image)
+        edit_mode: If editing an existing image, use 'inpainting' (default) to modify specific elements while keeping the rest exactly the same, or 'style_transfer' to generate a new image inspired by the old one's composition but with a completely new style or subject.
 
     Returns:
         A dictionary containing the generated image's artifact name.
@@ -1140,12 +1141,17 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         # Check if there is a cached reference image in session state
         latest_img = tool_context.state.get("latest_input_image")
         if latest_img:
-            # The Interactions API requires explicit "semantic masking" phrasing to edit an image 
-            # rather than use it as a loose structural reference.
-            edit_prompt = (
-                f"Using the provided image, perform the following edit: '{prompt}'. "
-                "Keep everything else in the image exactly the same, preserving the original style, lighting, and composition."
-            )
+            if edit_mode == "inpainting":
+                # The Interactions API requires explicit "semantic masking" phrasing to edit an image 
+                # rather than use it as a loose structural reference.
+                final_prompt = (
+                    f"Using the provided image, perform the following edit: '{prompt}'. "
+                    "Keep everything else in the image exactly the same, preserving the original style, lighting, and composition."
+                )
+            else:
+                # For style transfer or broad reimaginings, just use the raw prompt
+                final_prompt = prompt
+                
             raw_bytes = base64.b64decode(latest_img["data"])
             # Use the documented Interactions API payload for image editing
             input_data = [
@@ -1156,11 +1162,12 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
                 },
                 {
                     "type": "text",
-                    "text": edit_prompt
+                    "text": final_prompt
                 }
             ]
             debug_info = {
-                "prompt": edit_prompt,
+                "prompt": final_prompt,
+                "edit_mode": edit_mode,
                 "has_image": True,
                 "mime_type": latest_img["mime_type"],
                 "image_bytes_length": len(raw_bytes),
