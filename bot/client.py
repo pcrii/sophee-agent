@@ -234,9 +234,11 @@ async def execute_agent_turn(
     # Trim history before running agent
     await trim_session_history(session_service, APP_NAME, user_id, session_id)
 
-    # Clear the previous turn's reference image to ensure a fresh generation by default
-    session.state.pop("latest_input_image", None)
-    session.state.pop("latest_input_image_artifact", None)
+    # We will accumulate any state changes required for this turn
+    state_updates = {
+        "latest_input_image": None,
+        "latest_input_image_artifact": None
+    }
 
     # Resolve image sequence threading via replies to image messages
     from bot.cache import get_image_metadata
@@ -264,12 +266,12 @@ async def execute_agent_turn(
                     if part and part.inline_data and part.inline_data.data:
                         import base64
                         img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                        session.state["latest_input_image"] = {
+                        state_updates["latest_input_image"] = {
                             "data": img_b64,
                             "mime_type": part.inline_data.mime_type or "image/jpeg",
                             "original_prompt": ref_meta.get("prompt") or "Generate an image",
                         }
-                        session.state["latest_input_image_artifact"] = artifact_name
+                        state_updates["latest_input_image_artifact"] = artifact_name
                         logger.info("Loaded reply reference image from artifact: %s", artifact_name)
                 except Exception as e:
                     logger.error("Failed to load reply reference image artifact %s: %s", artifact_name, e)
@@ -308,7 +310,7 @@ async def execute_agent_turn(
 
     # Process image attachments
     if image_data:
-        session.state["latest_input_image"] = {
+        state_updates["latest_input_image"] = {
             "data": image_data["data"],
             "mime_type": image_data["mime_type"],
             "original_prompt": "Uploaded reference image",
@@ -326,7 +328,11 @@ async def execute_agent_turn(
             session_id=session_id,
             artifact=part
         )
-        session.state["latest_input_image_artifact"] = uploaded_key
+        state_updates["latest_input_image_artifact"] = uploaded_key
+
+    # Persist the state updates before the agent run
+    if state_updates:
+        await update_session_state(user_id, session_id, state_updates)
 
     # Build user preference context
     user_prefs = session.state.get("user_prefs", {})
