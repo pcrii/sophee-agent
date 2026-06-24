@@ -46,6 +46,13 @@ def create_app():
         from google.genai import types
         response_text = ""
         try:
+            # Track artifacts before the run
+            before_keys = set(
+                await artifact_service.list_artifact_keys(
+                    app_name="app", user_id=request.user_id, session_id=request.session_id
+                )
+            )
+
             new_msg = types.Content(role="user", parts=[types.Part.from_text(text=request.message)])
             async for event in runner.run_async(
                 user_id=request.user_id,
@@ -59,9 +66,38 @@ def create_app():
                         else []
                     )
                     response_text += "".join([p.text for p in response_parts if p.text])
-            return {"status": "success", "response": response_text}
+            
+            # Check for new artifacts
+            after_keys = set(
+                await artifact_service.list_artifact_keys(
+                    app_name="app", user_id=request.user_id, session_id=request.session_id
+                )
+            )
+            new_keys = list(after_keys - before_keys)
+
+            return {"status": "success", "response": response_text, "artifacts": new_keys}
         except Exception as e:
             logger.exception("Error during API chat invocation:")
+            return {"status": "error", "message": str(e)}
+
+    from fastapi.responses import Response
+
+    @app.get("/api/artifacts/{user_id}/{session_id}/{filename}")
+    async def get_artifact(user_id: str, session_id: str, filename: str):
+        """Returns the raw bytes of an artifact."""
+        try:
+            part_data = await artifact_service.load_artifact(
+                app_name="app",
+                user_id=user_id,
+                session_id=session_id,
+                filename=filename,
+            )
+            mime_type = part_data.inline_data.mime_type
+            if not mime_type:
+                mime_type = "application/octet-stream"
+            return Response(content=part_data.inline_data.data, media_type=mime_type)
+        except Exception as e:
+            logger.exception("Error during artifact retrieval:")
             return {"status": "error", "message": str(e)}
 
     @app.get("/api/suggestions")
