@@ -8,10 +8,18 @@ from google.adk.tools import ToolContext
 # We will run these in asyncio.to_thread to prevent blocking the ADK event loop.
 from ytmusicapi import YTMusic
 
+import os
+
 logger = logging.getLogger(__name__)
 
-# Initialize a global client (no auth needed for public searches)
-yt = YTMusic()
+# Initialize a global client (auth if oauth.json exists)
+OAUTH_FILE = "oauth.json"
+if os.path.exists(OAUTH_FILE):
+    yt = YTMusic(OAUTH_FILE)
+    logger.info("YTMusic authenticated via oauth.json")
+else:
+    yt = YTMusic()
+    logger.info("YTMusic using unauthenticated client")
 
 def _extract_video_id(url: str) -> Optional[str]:
     """Extracts a YouTube videoId from standard youtube URLs."""
@@ -317,4 +325,35 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
             
     except Exception as e:
         logger.error(f"YTMusic load playlist error: {e}")
+        return {"status": "error", "message": str(e)}
+
+async def get_ytmusic_library_playlists(tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
+    """Fetches the user's personal YouTube Music library playlists.
+    Requires OAuth authentication.
+    
+    Returns:
+        A dictionary containing the user's playlists.
+    """
+    logger.info("YTMusic get library playlists")
+    try:
+        # Check if auth works
+        if not os.path.exists(OAUTH_FILE):
+            return {"status": "error", "message": "Bot is not authenticated. Please run auth_ytmusic.py first."}
+            
+        playlists_res = await asyncio.to_thread(yt.get_library_playlists, 50)
+        
+        playlists = []
+        for pl in playlists_res:
+            playlists.append({
+                "title": pl.get("title"),
+                "playlistId": pl.get("playlistId"),
+                "count": pl.get("count", "Unknown")
+            })
+            
+        return {
+            "status": "success",
+            "playlists": playlists
+        }
+    except Exception as e:
+        logger.error(f"YTMusic library playlists error: {e}")
         return {"status": "error", "message": str(e)}

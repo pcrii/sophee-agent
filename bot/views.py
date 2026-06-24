@@ -644,6 +644,19 @@ class SkipView(discord.ui.View):
         # Add to liked if not already present
         if not any(t.get("artist") == artist and t.get("title") == title for t in liked):
             liked.append({"artist": artist, "title": title})
+            
+        # YouTube Music Sync
+        try:
+            from app.ytmusic_tools import search_ytmusic_track, yt, OAUTH_FILE
+            import os
+            import asyncio
+            if os.path.exists(OAUTH_FILE):
+                track = await search_ytmusic_track(current)
+                if track and track.get("videoId"):
+                    await asyncio.to_thread(yt.rate_song, track["videoId"], "LIKE")
+        except Exception as e:
+            from bot.audio import logger
+            logger.warning(f"Failed to sync LIKE to YouTube Music: {e}")
 
         await self._reply(interaction, f"👍 Liked '{current}'. Future tracks will favor similar selections.")
 
@@ -678,6 +691,19 @@ class SkipView(discord.ui.View):
         # Add to disliked if not already present
         if not any(t.get("artist") == artist and t.get("title") == title for t in disliked):
             disliked.append({"artist": artist, "title": title})
+            
+        # YouTube Music Sync
+        try:
+            from app.ytmusic_tools import search_ytmusic_track, yt, OAUTH_FILE
+            import os
+            import asyncio
+            if os.path.exists(OAUTH_FILE):
+                track = await search_ytmusic_track(current)
+                if track and track.get("videoId"):
+                    await asyncio.to_thread(yt.rate_song, track["videoId"], "DISLIKE")
+        except Exception as e:
+            from bot.audio import logger
+            logger.warning(f"Failed to sync DISLIKE to YouTube Music: {e}")
 
         await self._reply(interaction, f"👎 Disliked '{current}'. Future tracks by this artist or similar will be avoided.")
 

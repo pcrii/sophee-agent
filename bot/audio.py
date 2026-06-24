@@ -543,6 +543,22 @@ async def audio_player_task(vc, queue, channel, abort_event):
 
                     if hasattr(channel, "guild") and channel.guild:
                         now_playing_cache[channel.guild.id] = label
+                        
+                        # Background Scrobbling
+                        async def _scrobble(song_label: str):
+                            try:
+                                from app.ytmusic_tools import search_ytmusic_track, yt, OAUTH_FILE
+                                import os
+                                if os.path.exists(OAUTH_FILE):
+                                    track = await search_ytmusic_track(song_label)
+                                    if track and track.get("videoId"):
+                                        song_data = await asyncio.to_thread(yt.get_song, track["videoId"])
+                                        await asyncio.to_thread(yt.add_history_item, song_data)
+                                        logger.info(f"Scrobbled '{song_label}' to YouTube Music history.")
+                            except Exception as scrobble_err:
+                                logger.warning(f"Failed to scrobble {song_label}: {scrobble_err}")
+                                
+                        asyncio.create_task(_scrobble(label))
 
                     # Update voice channel status for songs (not TTS segments)
                     if "tts_cache" not in file_path and "artifacts" not in file_path:
