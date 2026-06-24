@@ -263,7 +263,7 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
     If JIT is enabled, it dumps the tracks into the candidate pool to act as mathematical seeds.
     
     Args:
-        playlist_id: The ID of the playlist (starts with PL or RD).
+        playlist_id: The ID of the playlist (starts with PL or RD). If you don't know the ID, you can pass the playlist name and this tool will search for the ID for you.
         
     Returns:
         A dictionary containing the loaded status.
@@ -277,7 +277,23 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
             if owner_client:
                 client_to_use = owner_client
                 
-        playlist_data = await asyncio.to_thread(client_to_use.get_playlist, playlist_id, limit=50)
+        # If the agent passed a name instead of an ID, try to find it first
+        if not playlist_id.startswith(("PL", "VL", "RD", "LM")):
+            logger.info(f"Playlist ID doesn't look like an ID, searching library for: {playlist_id}")
+            playlists_res = await asyncio.to_thread(client_to_use.search, playlist_id, filter="playlists", scope="library")
+            if not playlists_res:
+                return {"status": "error", "message": f"Could not find any playlist named '{playlist_id}' in your library."}
+            
+            # Use the top match's playlist ID
+            playlist_id = playlists_res[0].get("playlistId")
+            logger.info(f"Found matching playlist ID: {playlist_id}")
+
+        if playlist_id == "LM":
+            # Liked songs uses a different method
+            playlist_data = await asyncio.to_thread(client_to_use.get_liked_songs, limit=50)
+        else:
+            playlist_data = await asyncio.to_thread(client_to_use.get_playlist, playlist_id, limit=50)
+            
         tracks = playlist_data.get("tracks", [])
         if not tracks:
             return {"status": "error", "message": "No tracks found in playlist."}
