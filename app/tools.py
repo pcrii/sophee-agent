@@ -1152,8 +1152,27 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
                     )
                 )
             ]
+            debug_info = {
+                "prompt": prompt,
+                "has_image": True,
+                "mime_type": latest_img["mime_type"],
+                "image_bytes_length": len(raw_bytes)
+            }
         else:
             input_data = prompt
+            debug_info = {
+                "prompt": prompt,
+                "has_image": False
+            }
+            
+        import json
+        import os
+        debug_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_payload.json")
+        try:
+            with open(debug_path, "w") as f:
+                json.dump(debug_info, f)
+        except Exception:
+            pass
 
         # Determine media resolution if there is a reference image
         req_media_res = None

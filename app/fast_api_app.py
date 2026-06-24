@@ -217,6 +217,23 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    @app.get("/api/debug/last_image_payload")
+    async def get_last_image_payload():
+        """Returns the debug info for the last image generation payload."""
+        payload_file = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "last_image_payload.json"
+        )
+        if not os.path.exists(payload_file):
+            return {"status": "info", "message": "No payload found."}
+        try:
+            import json
+            with open(payload_file, encoding="utf-8") as f:
+                payload = json.load(f)
+            return {"status": "success", "payload": payload}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     @app.get("/api/debug/logs")
     async def get_debug_logs(lines: int = 100):
         """Returns the last N lines of the systemd service logs."""
