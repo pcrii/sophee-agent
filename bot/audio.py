@@ -25,7 +25,6 @@ from app.radio_state import active_radios, now_playing_cache, get_discord_client
 from app.tools import (
     fetch_lastfm_similar_tracks,
     fetch_lastfm_tag_tracks,
-    get_user_favorites,
 )
 from app.ytmusic_tools import (
     search_ytmusic_track,
