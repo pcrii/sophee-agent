@@ -258,6 +258,7 @@ async def download_song_async(query):
         "noplaylist": True,
         "quiet": False,
         "no_warnings": False,
+        "ratelimit": 1000000, # Limit to 1MB/s to prevent Discord audio ducking
         "js_runtimes": {"node": {}, "deno": {"path": deno_path}},
     }
 

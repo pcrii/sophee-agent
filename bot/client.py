@@ -644,25 +644,25 @@ async def on_message(message: discord.Message):
     if not message.guild:
         return
 
-    # Check if bot is mentioned or replied to
+    # Check if bot is explicitly mentioned
     is_mentioned = client.user in message.mentions
-    is_reply_to_bot = (
-        message.reference
-        and message.reference.resolved
-        and hasattr(message.reference.resolved, "author")
-        and message.reference.resolved.author == client.user
-    )
 
     # Bypassed mention/reply check if it is an active adventure thread
     is_adventure_thread = False
     if isinstance(message.channel, discord.Thread):
-        temp_session = await session_service.get_session(
-            app_name=APP_NAME, user_id=str(message.author.id), session_id=f"discord_{message.channel.id}"
-        )
-        if temp_session and temp_session.state.get("adventure_active"):
-            is_adventure_thread = True
+        try:
+            temp_session = await session_service.get_session(
+                app_name=APP_NAME, user_id=str(message.author.id), session_id=f"discord_{message.channel.id}"
+            )
+            is_adventure_thread = (
+                temp_session 
+                and temp_session.state.get("adventure_active")
+                and message.channel.id in active_adventure_threads
+            )
+        except Exception:
+            pass
 
-    if not is_mentioned and not is_reply_to_bot and not is_adventure_thread:
+    if not is_mentioned and not is_adventure_thread:
         return
 
     # Rate limiting
