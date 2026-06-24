@@ -716,8 +716,18 @@ async def jit_replenish_queue(state, channel=None):
                         new_candidates.append((track, 15))
 
             if played_tracks:
-                # Randomly pick 2 influencers from the last 5 tracks
-                influencers = random.sample(played_tracks[-5:], min(len(played_tracks), 2))
+                recent_played = played_tracks[-5:]
+                requested_tracks = [t for t in recent_played if t.get("is_request")]
+                
+                influencers = []
+                if requested_tracks:
+                    influencers.append(random.choice(requested_tracks))
+                    remaining = [t for t in recent_played if t not in influencers]
+                    if remaining:
+                        influencers.append(random.choice(remaining))
+                else:
+                    influencers = random.sample(recent_played, min(len(recent_played), 2))
+                    
                 for infl in influencers:
                     # Filter out actively disliked
                     is_infl_disliked = any(

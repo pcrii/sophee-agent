@@ -165,7 +165,7 @@ async def add_to_queue(artist: str, title: str, tool_context: ToolContext, play_
             "message": "No active radio broadcast found for this server.",
         }
 
-    new_track = {"artist": artist, "title": title}
+    new_track = {"artist": artist, "title": title, "is_request": True}
     if video_id:
         new_track["videoId"] = video_id
         

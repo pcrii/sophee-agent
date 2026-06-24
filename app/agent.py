@@ -69,6 +69,8 @@ from app.ytmusic_tools import (
     search_ytmusic_artist,
     generate_ytmusic_radio,
     get_ytmusic_similar_artists,
+    get_ytmusic_charts,
+    get_ytmusic_mood_playlists,
 )
 from app.adventure_tools import (
     start_adventure,
@@ -138,6 +140,8 @@ _ytmusic_tools = [
     search_ytmusic_artist,
     generate_ytmusic_radio,
     get_ytmusic_similar_artists,
+    get_ytmusic_charts,
+    get_ytmusic_mood_playlists,
 ]
 
 
@@ -148,7 +152,7 @@ _ytmusic_tools = [
 dj_agent = Agent(
     name="dj_agent",
     model=model_config,
-    description="An expert radio DJ and music enthusiast who curates playlists, plays music, and generates voice DJ commentary.",
+    description="An expert radio DJ and passionate music scholar who curates playlists, analyzes lyrics, discusses album lore, and generates voice DJ commentary.",
     instruction=_load_prompt("dj_agent"),
     tools=[
         start_radio_station,
@@ -189,23 +193,7 @@ art_director = Agent(
     ],
 )
 
-music_expert = Agent(
-    name="music_expert",
-    model=model_config,
-    description="A highly passionate and enthusiastic music scholar/critic who explores song meanings, album lore, narrative building, and artist intentions.",
-    instruction=_load_prompt("music_expert"),
-    tools=[
-        get_now_playing,
-        # Last.fm and MusicBrainz API access
-        search_lastfm,
-        get_trending_tracks,
-        get_trending_artists,
-        *_musicbrainz_tools,
-        *_ytmusic_tools,
-        # User interaction & Memory
-        *_user_tools,
-    ],
-)
+
 
 researcher = Agent(
     name="researcher",
@@ -256,7 +244,7 @@ root_agent = Agent(
     name="root_agent",
     model=model_config,
     instruction=_load_prompt("root_agent"),
-    sub_agents=[dj_agent, art_director, music_expert, researcher, general_assistant, dm_agent],
+    sub_agents=[dj_agent, art_director, researcher, general_assistant, dm_agent],
 )
 
 

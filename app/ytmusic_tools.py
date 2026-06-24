@@ -166,3 +166,91 @@ async def get_ytmusic_similar_artists(browse_id: str, tool_context: Optional[Too
     except Exception as e:
         logger.error(f"YTMusic similar artists error: {e}")
         return {"status": "error", "message": str(e)}
+
+async def get_ytmusic_charts(country: str = "US", tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
+    """Fetches the top trending charts from YouTube Music.
+    
+    Args:
+        country: The 2-letter ISO country code (e.g. 'US', 'ZZ' for global). Defaults to 'US'.
+        
+    Returns:
+        A dictionary containing top trending tracks and artists.
+    """
+    logger.info(f"YTMusic get charts for country: {country}")
+    try:
+        charts = await asyncio.to_thread(yt.get_charts, country)
+        
+        # Extract tracks
+        track_items = charts.get("videos", {}).get("items", [])[:20]
+        tracks = []
+        for t in track_items:
+            artists = [a.get("name") for a in t.get("artists", [])]
+            tracks.append({
+                "title": t.get("title"),
+                "artists": artists,
+                "videoId": t.get("videoId")
+            })
+            
+        return {
+            "status": "success",
+            "country": country,
+            "trending_tracks": tracks
+        }
+    except Exception as e:
+        logger.error(f"YTMusic charts error: {e}")
+        return {"status": "error", "message": str(e)}
+
+async def get_ytmusic_mood_playlists(category: str, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
+    """Fetches official YouTube Music curated playlists for a specific mood or genre category.
+    To see available categories, you must first call this with category="" (empty string).
+    
+    Args:
+        category: The name of the mood or genre category (e.g. 'Hip Hop', 'Chill', 'New Releases').
+                  If left empty, returns a list of all valid categories.
+                  
+    Returns:
+        A dictionary containing official playlist names and descriptions, or a list of categories.
+    """
+    logger.info(f"YTMusic get mood playlists for category: {category}")
+    try:
+        categories_dict = await asyncio.to_thread(yt.get_mood_categories)
+        all_categories = {}
+        for group, cat_list in categories_dict.items():
+            for c in cat_list:
+                all_categories[c["title"].lower()] = c["params"]
+                
+        if not category:
+            return {
+                "status": "info",
+                "message": "Please provide a valid category. Here are the available options:",
+                "available_categories": list(all_categories.keys())
+            }
+            
+        cat_lower = category.lower().strip()
+        if cat_lower not in all_categories:
+            return {
+                "status": "error",
+                "message": f"Category '{category}' not found.",
+                "available_categories": list(all_categories.keys())
+            }
+            
+        params = all_categories[cat_lower]
+        playlists_res = await asyncio.to_thread(yt.get_mood_playlists, params)
+        
+        playlists = []
+        for pl in playlists_res[:10]:
+            playlists.append({
+                "title": pl.get("title"),
+                "description": pl.get("description", ""),
+                "subscribers": pl.get("subscribers", ""),
+                "playlistId": pl.get("playlistId")
+            })
+            
+        return {
+            "status": "success",
+            "category": category,
+            "playlists": playlists
+        }
+    except Exception as e:
+        logger.error(f"YTMusic mood playlists error: {e}")
+        return {"status": "error", "message": str(e)}
