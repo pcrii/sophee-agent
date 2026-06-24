@@ -508,4 +508,50 @@ async def mutate_upcoming_queue(tool_context: ToolContext, chaotic: bool = False
         "upcoming_tracks": new_upcoming,
     }
 
+async def toggle_radio_jit(enabled: bool, tool_context: ToolContext) -> dict:
+    """Toggles Just-In-Time (JIT) algorithmic track generation for the radio station.
+    When JIT is ON (True), the station acts like an endless algorithm, automatically finding new tracks 
+    that match the vibe/seed when the queue runs low.
+    When JIT is OFF (False), the station acts like a finite CD player. It will only play exactly what is 
+    in the upcoming_tracks queue (e.g. playlists you load) and then stop.
+    
+    Args:
+        enabled: True to enable endless algorithmic radio, False to disable it and only play manually queued tracks.
+
+    Returns:
+        A success message indicating the new JIT state.
+    """
+    state = _get_radio_state(tool_context)
+    if not state or not state.get("active"):
+        return {
+            "status": "error",
+            "message": "No active radio broadcast found for this server.",
+        }
+
+    state["jit_enabled"] = enabled
+
+    # Persist change
+    from bot.audio import persist_radio_state_helper
+    from bot.client import session_service
+    import asyncio
+    from app.radio_state import resolve_guild_id
+
+    session = tool_context.session
+    session_id = session.id if session else ""
+    channel_id_str = session_id.replace("discord_", "")
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        channel_id = 9999
+    guild_id = resolve_guild_id(channel_id) or channel_id
+
+    asyncio.create_task(
+        persist_radio_state_helper(guild_id, session_service, channel_id, state)
+    )
+
+    mode_text = "ON (Endless algorithmic radio)" if enabled else "OFF (Finite playlist mode)"
+    return {
+        "status": "success",
+        "message": f"Successfully toggled JIT generation to {mode_text}.",
+    }
 
