@@ -284,8 +284,11 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
             if not playlists_res:
                 return {"status": "error", "message": f"Could not find any playlist named '{playlist_id}' in your library."}
             
-            # Use the top match's playlist ID
-            playlist_id = playlists_res[0].get("playlistId")
+            # Use the top match's playlist ID (ytmusicapi usually returns browseId for playlists)
+            playlist_id = playlists_res[0].get("browseId") or playlists_res[0].get("playlistId")
+            if not playlist_id:
+                return {"status": "error", "message": f"Found playlist but could not extract its ID."}
+                
             logger.info(f"Found matching playlist ID: {playlist_id}")
 
         if playlist_id == "LM":
@@ -372,7 +375,7 @@ async def search_ytmusic_library_playlists(query: str, tool_context: Optional[To
         for pl in playlists_res[:10]:
             playlists.append({
                 "title": pl.get("title"),
-                "playlistId": pl.get("playlistId")
+                "playlistId": pl.get("browseId") or pl.get("playlistId")
             })
             
         return {
