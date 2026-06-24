@@ -12,12 +12,13 @@ No slash commands. Just @ mention her and talk.
 - **Playlist Generation** — describe a vibe, genre, or theme and Sophee curates a validated 4-track starting sequence using agentic weighted tag expansion + Last.fm validation
 - **Live Voice Playback** — connects to Discord voice channels, downloads songs via yt-dlp, and streams audio with volume control
 - **Track Feedback & Scoring** — thumbs up/down (👍/👎) for session-based JIT steering, and persistent Heart (💖) button to save favorites globally
-- **Auto-Replenishment** — queue dynamically JIT-refills to maintain exactly 3 upcoming tracks, scoring candidates on the fly using your feedback
+- **Auto-Replenishment (Rolling Candidate Pool)** — queue dynamically JIT-refills using a persistent candidate pool. It fetches recommendations from YouTube Music and Last.fm based on your recent listening history, merging old and new tracks, and applying an Age-Decay penalty so stale candidates naturally drop off.
 - **Discovery Modes** — supports Standard, Genre Discovery (using seed tags and favorites negatively to block duplicates), and Favorites Discovery (seeds from your persistent favorites profile)
 - **DJ Commentary** — generates spoken voice segments between tracks (segues, trivia, station IDs, fake sponsor reads, mood checks, listener mail, field reports) using Google TTS
 - **Time-Aware DJ** — commentary references the current time of day and day of week naturally
 - **Queue Management** — show upcoming tracks, add/insert tracks (with play-next support), remove, shuffle, and steer the radio direction mid-broadcast
 - **Playlist Mutation** — reroll playlists through Last.fm similarity (smooth or chaotic mutation modes)
+- **YouTube Music Integration** — uses keyless `ytmusicapi` for exact track validation, fetching high-quality metadata, and pinging YouTube's algorithmic "Up Next" endpoint for intelligent radio generation.
 - **New Music Discovery** — fetches actual new releases from MusicBrainz (structured data, no hallucination), falls back to Gemini Search Grounding for niche genres
 - **Song Cache** — downloaded songs are cached locally with LRU eviction at 500MB
 
@@ -62,7 +63,9 @@ No slash commands. Just @ mention her and talk.
 sophee-agent/
 ├── app/                        # Agent logic (no Discord dependency)
 │   ├── agent.py                # Agent definitions, prompt loading, tool wiring
-│   ├── tools.py                # Core tools (image, TTS, news, Last.fm, MusicBrainz)
+│   ├── tools.py                # Core tools (image, TTS, news, Last.fm)
+│   ├── ytmusic_tools.py        # YouTube Music API tools
+│   ├── musicbrainz_tools.py    # MusicBrainz API tools
 │   ├── radio_tools.py          # Queue management tools (show, add, remove, shuffle, steer)
 │   ├── radio_state.py          # Shared radio state registry (guild-keyed)
 │   ├── user_tools.py           # Per-user preference tools (remember, get, clear)
@@ -125,6 +128,8 @@ The root agent never responds directly — it immediately transfers to the most 
 | `get_track_info` | Tags, album, wiki, play count for a specific track |
 | `get_trending_tracks` | Global or by-country weekly charts |
 | `get_trending_artists` | Global or by-country trending artists |
+| `search_ytmusic_track` | Exact canonical spelling, metadata validation, and `videoId` extraction |
+| `generate_ytmusic_radio` | Algorithmic playlist generation using YouTube Music's "Up Next" |
 
 ---
 
@@ -179,6 +184,7 @@ python bot/client.py
 | Gemini | Yes | Yes (free tier) | [Google AI Studio](https://aistudio.google.com/) |
 | Last.fm | Yes | Yes | [Last.fm API](https://www.last.fm/api/account/create) |
 | MusicBrainz | No (automatic) | Yes | No key needed, just a User-Agent header |
+| YouTube Music | No (automatic) | Yes | Emulates web client via `ytmusicapi` |
 
 ---
 
