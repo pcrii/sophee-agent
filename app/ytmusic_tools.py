@@ -258,15 +258,16 @@ async def get_ytmusic_mood_playlists(category: str, tool_context: Optional[ToolC
         return {"status": "error", "message": str(e)}
 
 async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
-    """Loads a YouTube Music playlist. If the station's JIT generation is disabled,
-    it adds the tracks directly to the upcoming queue (maintaining order for single-artist albums, shuffling otherwise).
+    """Loads a YouTube Music playlist. 
+    Can be used to simply inspect the contents of a playlist.
+    If there is an active radio station and JIT generation is disabled, it adds the tracks directly to the upcoming queue (maintaining order for single-artist albums, shuffling otherwise).
     If JIT is enabled, it dumps the tracks into the candidate pool to act as mathematical seeds.
     
     Args:
         playlist_id: The ID of the playlist (starts with PL or RD). If you don't know the ID, you can pass the playlist name and this tool will search for the ID for you.
         
     Returns:
-        A dictionary containing the loaded status.
+        A dictionary containing the loaded status and the tracks.
     """
     logger.info(f"YTMusic load playlist: {playlist_id}")
     try:
@@ -313,7 +314,11 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
         from app.radio_tools import _get_radio_state
         state = _get_radio_state(tool_context)
         if not state or not state.get("active"):
-            return {"status": "error", "message": "No active radio broadcast found."}
+            return {
+                "status": "success", 
+                "message": f"Successfully fetched playlist. Note: The radio is NOT currently active, so these {len(parsed_tracks)} tracks were NOT added to any queue. They are just listed here for your information.",
+                "tracks": parsed_tracks
+            }
             
         jit_enabled = state.get("jit_enabled", True)
         
