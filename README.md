@@ -166,6 +166,10 @@ Copy `.env.example` to `.env` and fill in your keys:
 DISCORD_TOKEN=your_discord_bot_token
 GEMINI_API_KEY=your_gemini_api_key
 LASTFM_KEY=your_lastfm_api_key
+
+# Optional — Google Cloud OAuth for YouTube Music (!ytlogin scrobbling)
+# YOUTUBE_CLIENT_ID=your_gcp_client_id
+# YOUTUBE_CLIENT_SECRET=your_gcp_client_secret
 ```
 
 ### Running
@@ -184,7 +188,7 @@ python bot/client.py
 | Gemini | Yes | Yes (free tier) | [Google AI Studio](https://aistudio.google.com/) |
 | Last.fm | Yes | Yes | [Last.fm API](https://www.last.fm/api/account/create) |
 | MusicBrainz | No (automatic) | Yes | No key needed, just a User-Agent header |
-| YouTube Music | No (automatic) | Yes | Emulates web client via `ytmusicapi` |
+| YouTube Music | No | Yes | Unauthenticated by default. Add a Google Cloud OAuth Desktop App Client ID/Secret to enable `!ytlogin` for multi-user scrobbling/history sync |
 
 ---
 
