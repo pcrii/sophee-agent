@@ -839,15 +839,6 @@ class RadioSettingsView(discord.ui.View):
 
 
 
-class YTLoginButtonView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        
-    @discord.ui.button(label="Link YouTube Music", style=discord.ButtonStyle.primary, emoji="🔗")
-    async def login_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from app.auth import start_oauth_flow
-        await start_oauth_flow(interaction.user.id, interaction)
-
 class AdventureView(discord.ui.View):
     """View containing interactive buttons for choices presented during an adventure."""
 

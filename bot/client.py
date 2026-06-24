@@ -720,6 +720,18 @@ async def on_message(message: discord.Message):
                 
             # Delete the session to clear history
             await session_service.delete_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+            
+            # WORKAROUND FOR ADK BUG: delete_session does not cascade delete events!
+            try:
+                import sqlite3
+                conn = sqlite3.connect('sessions.db')
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM events WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to clear orphaned events: {e}")
+                
             await message.reply("🔄 Conversation history and agent state have been completely flushed!")
         except Exception as e:
             logger.exception("Error resetting session:")

@@ -270,7 +270,14 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
     """
     logger.info(f"YTMusic load playlist: {playlist_id}")
     try:
-        playlist_data = await asyncio.to_thread(yt.get_playlist, playlist_id, limit=50)
+        client_to_use = yt
+        if tool_context and tool_context.session and tool_context.session.user_id:
+            from app.auth import get_ytm_client
+            owner_client = get_ytm_client(tool_context.session.user_id)
+            if owner_client:
+                client_to_use = owner_client
+                
+        playlist_data = await asyncio.to_thread(client_to_use.get_playlist, playlist_id, limit=50)
         tracks = playlist_data.get("tracks", [])
         if not tracks:
             return {"status": "error", "message": "No tracks found in playlist."}
@@ -341,7 +348,7 @@ async def search_ytmusic_library_playlists(query: str, tool_context: Optional[To
         user_yt = get_ytm_client(user_id)
         
         if not user_yt:
-            return {"status": "error", "message": "You have not linked your YouTube Music account. Type `!ytlogin` in Discord to securely log in."}
+            return {"status": "success", "query": query, "playlists": []}
             
         playlists_res = await asyncio.to_thread(user_yt.search, query, filter="playlists", scope="library")
         
