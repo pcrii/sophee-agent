@@ -22,7 +22,15 @@ from google.genai import types
 
 from app.agent import dj_agent
 from app.radio_state import active_radios, now_playing_cache, get_discord_client
-from app.tools import fetch_lastfm_similar_tracks, fetch_lastfm_tag_tracks
+from app.tools import (
+    fetch_lastfm_similar_tracks,
+    fetch_lastfm_tag_tracks,
+    get_user_favorites,
+)
+from app.ytmusic_tools import (
+    search_ytmusic_track,
+    generate_ytmusic_radio,
+)
 
 logger = logging.getLogger("sophee.bot.audio")
 
@@ -616,7 +624,7 @@ async def audio_player_task(vc, queue, channel, abort_event):
 # Queue replenishment
 # ---------------------------------------------------------------------------
 
-async def replenish_radio_queue(state, channel=None):
+async def jit_replenish_queue(state, channel=None):
     """Auto-fills the queue to maintain exactly 3 upcoming tracks using JIT scoring."""
     if len(state["upcoming_tracks"]) >= 3:
         return
@@ -644,27 +652,35 @@ async def replenish_radio_queue(state, channel=None):
     disliked_artists = {t["artist"].lower().strip() for t in disliked_tracks}
 
     added_tracks = []
+    
+    # Initialize rolling candidate pool
+    if "candidate_pool" not in state:
+        state["candidate_pool"] = []
 
     for _ in range(needed):
-        candidates = []
+        # Age existing candidates
+        for c in state["candidate_pool"]:
+            c["age"] += 1
+            
+        # Purge candidates older than 10
+        state["candidate_pool"] = [c for c in state["candidate_pool"] if c["age"] <= 10]
 
-        # Gather candidates based on mode
+        new_candidates = []
+
+        # Gather new candidates based on mode
         if mode == "discovery_favorites":
-            # Pull candidates by fetching similar tracks to favorites
             if fav_tracks:
-                # Sample up to 2 favorites to query
                 sample_favs = random.sample(fav_tracks, min(len(fav_tracks), 2))
                 for ft in sample_favs:
                     similar = await fetch_lastfm_similar_tracks(ft["artist"], ft["title"], limit=20)
                     for track in similar:
-                        candidates.append((track, 15))
+                        new_candidates.append((track, 15))
             else:
                 pop_tracks = await fetch_lastfm_tag_tracks("pop", limit=20)
                 for track in pop_tracks:
-                    candidates.append((track, 2))
+                    new_candidates.append((track, 2))
 
         elif mode == "discovery_genre":
-            # Pull candidates from expanded seed_tags (with weights)
             if seed_tags:
                 for tag_entry in seed_tags:
                     if isinstance(tag_entry, dict):
@@ -676,53 +692,59 @@ async def replenish_radio_queue(state, channel=None):
 
                     tag_tracks = await fetch_lastfm_tag_tracks(tag_name, limit=20)
                     for idx, track in enumerate(tag_tracks):
-                        # Mainstream filter: penalize top 5 most popular tracks in tag list
-                        popularity_penalty = 0
-                        if idx < 5:
-                            popularity_penalty = -8
-                        candidates.append((track, (10 * tag_weight) + popularity_penalty))
+                        popularity_penalty = -8 if idx < 5 else 0
+                        new_candidates.append((track, (10 * tag_weight) + popularity_penalty))
             else:
                 tag_tracks = await fetch_lastfm_tag_tracks(genre, limit=20)
                 for idx, track in enumerate(tag_tracks):
-                    popularity_penalty = 0
-                    if idx < 5:
-                        popularity_penalty = -8
-                    candidates.append((track, 10 + popularity_penalty))
+                    popularity_penalty = -8 if idx < 5 else 0
+                    new_candidates.append((track, 10 + popularity_penalty))
 
-            # Also pull similar to session liked tracks (if any)
             if liked_tracks:
                 sample_liked = random.sample(liked_tracks, min(len(liked_tracks), 2))
                 for lt in sample_liked:
                     similar = await fetch_lastfm_similar_tracks(lt["artist"], lt["title"], limit=15)
                     for track in similar:
-                        candidates.append((track, 12))
+                        new_candidates.append((track, 12))
 
         else:  # "standard"
-            # 1. Liked tracks similarity
             if liked_tracks:
-                # Pick up to 2 liked tracks for diversity
                 sample_liked = random.sample(liked_tracks, min(len(liked_tracks), 2))
                 for lt in sample_liked:
                     similar = await fetch_lastfm_similar_tracks(lt["artist"], lt["title"], limit=20)
                     for track in similar:
-                        candidates.append((track, 15))
+                        new_candidates.append((track, 15))
 
-            # 2. Last played track similarity (if not disliked)
             if played_tracks:
-                last_track = played_tracks[-1]
-                last_artist = last_track.get("artist", "").lower().strip()
-                last_title = last_track.get("title", "").lower().strip()
-                is_last_disliked = any(
-                    t.get("artist", "").lower().strip() == last_artist
-                    and t.get("title", "").lower().strip() == last_title
-                    for t in disliked_tracks
-                )
-                if not is_last_disliked:
-                    similar = await fetch_lastfm_similar_tracks(last_track["artist"], last_track["title"], limit=20)
-                    for track in similar:
-                        candidates.append((track, 10))
+                # Randomly pick 2 influencers from the last 5 tracks
+                influencers = random.sample(played_tracks[-5:], min(len(played_tracks), 2))
+                for infl in influencers:
+                    # Filter out actively disliked
+                    is_infl_disliked = any(
+                        t.get("artist", "").lower().strip() == infl.get("artist", "").lower().strip()
+                        and t.get("title", "").lower().strip() == infl.get("title", "").lower().strip()
+                        for t in disliked_tracks
+                    )
+                    if not is_infl_disliked:
+                        # 1. Last.fm similarity
+                        similar = await fetch_lastfm_similar_tracks(infl["artist"], infl["title"], limit=15)
+                        for track in similar:
+                            new_candidates.append((track, 10))
+                            
+                        # 2. YT Music similarity (needs videoId)
+                        vid = infl.get("videoId")
+                        if not vid:
+                            yt_res = await search_ytmusic_track(f"{infl.get('artist')} {infl.get('title')}")
+                            if yt_res.get("status") == "success":
+                                vid = yt_res.get("videoId")
+                                infl["videoId"] = vid 
+                                
+                        if vid:
+                            yt_radio = await generate_ytmusic_radio(vid)
+                            if yt_radio.get("status") == "success":
+                                for track in yt_radio.get("tracks", [])[:15]:
+                                    new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 12))
 
-            # 3. Seed tags (with weights)
             if seed_tags:
                 for tag_entry in seed_tags:
                     if isinstance(tag_entry, dict):
@@ -734,27 +756,42 @@ async def replenish_radio_queue(state, channel=None):
 
                     tag_tracks = await fetch_lastfm_tag_tracks(tag_name, limit=20)
                     for track in tag_tracks:
-                        candidates.append((track, 8 * tag_weight))
+                        new_candidates.append((track, 8 * tag_weight))
             else:
-                # Fallback to single genre tag
                 tag_tracks = await fetch_lastfm_tag_tracks(genre, limit=20)
                 for track in tag_tracks:
-                    candidates.append((track, 5))
+                    new_candidates.append((track, 5))
 
-        # Fallback to pop if nothing found
-        if not candidates:
+        if not new_candidates and not state["candidate_pool"]:
             pop_tracks = await fetch_lastfm_tag_tracks("pop", limit=20)
             for track in pop_tracks:
-                candidates.append((track, 2))
+                new_candidates.append((track, 2))
 
-        if not candidates:
+        # Add new candidates to the pool
+        for track, base_score in new_candidates:
+            state["candidate_pool"].append({
+                "track": track,
+                "base_score": base_score,
+                "age": 0
+            })
+            
+        # Cap pool size at 100 to prevent memory bloat (sort by age, oldest first, and slice)
+        if len(state["candidate_pool"]) > 100:
+            state["candidate_pool"].sort(key=lambda x: x["age"])
+            state["candidate_pool"] = state["candidate_pool"][:100]
+
+        if not state["candidate_pool"]:
             break
 
-        # Compute scoring for each unique candidate
+        # Compute scoring for each unique candidate in the pool
         scored_candidates = []
         seen = set()
 
-        for track, base_score in candidates:
+        for c_data in state["candidate_pool"]:
+            track = c_data["track"]
+            base_score = c_data["base_score"]
+            age = c_data["age"]
+            
             artist = str(track.get("artist", "")).strip()
             title = str(track.get("title", "")).strip()
             if not artist or not title:
@@ -793,40 +830,41 @@ async def replenish_radio_queue(state, channel=None):
                 if is_favorited:
                     continue
 
-            score = base_score
+            score = base_score - (age * 0.5)
 
-            # Boost if artist is in session liked artists
             if artist.lower() in liked_artists:
                 score += 10
-
-            # Penalize if artist is in session disliked artists
             if artist.lower() in disliked_artists:
                 score -= 30
+            if mode == "discovery_favorites" and artist.lower() in fav_artists:
+                score -= 15
 
-            # Minimize favorited artists in favorites discovery to encourage discovery of new artists
-            if mode == "discovery_favorites":
-                if artist.lower() in fav_artists:
-                    score -= 15
-
-            scored_candidates.append((score, track))
+            scored_candidates.append((score, c_data))
 
         if not scored_candidates:
+            # All candidates were filtered out (duplicates/dislikes). Clear pool and break to retry next tick.
+            state["candidate_pool"] = []
             break
 
         # Sort descending by score
         scored_candidates.sort(key=lambda x: x[0], reverse=True)
 
-        # Get highest score
         best_score = scored_candidates[0][0]
-        # Gather all candidates that have this best score to select randomly
-        top_candidates = [track for score, track in scored_candidates if score == best_score]
-        chosen_track = random.choice(top_candidates)
+        top_candidates = [c_data for score, c_data in scored_candidates if score == best_score]
+        chosen_c_data = random.choice(top_candidates)
 
+        chosen_track = chosen_c_data["track"]
         added_tracks.append(chosen_track)
         state["upcoming_tracks"].append(chosen_track)
+        
+        # Remove the chosen candidate from the pool
+        try:
+            state["candidate_pool"].remove(chosen_c_data)
+        except ValueError:
+            pass
 
     if added_tracks:
-        logger.info("Replenished queue JIT with %d tracks.", len(added_tracks))
+        logger.info("Replenished queue JIT with %d tracks. Candidate pool size: %d", len(added_tracks), len(state["candidate_pool"]))
         if channel:
             try:
                 tracks_list_str = "\n".join([f"- **{t.get('artist')}** - *{t.get('title')}*" for t in added_tracks])
