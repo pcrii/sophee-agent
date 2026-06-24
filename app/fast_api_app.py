@@ -20,15 +20,18 @@ class SuggestionsUpdateRequest(BaseModel):
 
 def create_app():
     """Creates and configures the FastAPI application."""
-    from google.adk.artifacts import InMemoryArtifactService
+    from google.adk.artifacts import FileArtifactService
     from google.adk.sessions import DatabaseSessionService
     from google.adk.runners import Runner
     from app.agent import root_agent
 
     app = FastAPI(title="Sophee Agent API")
 
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    artifacts_dir = os.path.join(project_root, "data", "artifacts")
+
     session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
-    artifact_service = InMemoryArtifactService()
+    artifact_service = FileArtifactService(root_dir=artifacts_dir)
 
     runner = Runner(
         agent=root_agent,

@@ -16,7 +16,7 @@ import tempfile
 
 import discord
 import yt_dlp
-from google.adk.artifacts import InMemoryArtifactService
+from google.adk.artifacts import FileArtifactService
 from google.adk.runners import Runner
 from google.genai import types
 
@@ -855,7 +855,9 @@ async def build_radio_sequence(
 
     # Create a dedicated artifact service for DJ TTS artifacts
     if artifact_service is None:
-        artifact_service = InMemoryArtifactService()
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        artifacts_dir = os.path.join(project_root, "data", "artifacts")
+        artifact_service = FileArtifactService(root_dir=artifacts_dir)
 
     dj_runner = Runner(
         agent=dj_agent,
