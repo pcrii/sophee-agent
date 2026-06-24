@@ -1,0 +1,18 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "play_music",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "Can you play some indie rock music?"}]
+      }
+    },
+    {
+      "eval_case_id": "what_is_playing",
+      "prompt": {
+        "role": "user",
+        "parts": [{"text": "What song is currently playing?"}]
+      }
+    }
+  ]
+}

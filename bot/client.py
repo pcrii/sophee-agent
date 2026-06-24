@@ -109,17 +109,17 @@ async def update_session_state(user_id: str, session_id: str, updates: dict):
         )
     if session:
         session.state.update(updates)
-        # Persist state changes via a dummy system event
+        # In ADK, all state mutations outside the agent loop must be persisted via an Event.
         from google.adk.events import Event, EventActions
         import time
         import uuid
-        dummy_event = Event(
+        state_event = Event(
             timestamp=time.time(),
             author="system",
             invocation_id=f"state_update_{uuid.uuid4().hex[:8]}",
             actions=EventActions(state_delta=updates),
         )
-        await session_service.append_event(session, dummy_event)
+        await session_service.append_event(session, state_event)
 
 
 # ---------------------------------------------------------------------------
