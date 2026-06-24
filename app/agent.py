@@ -59,6 +59,11 @@ from app.suggestion_box import (
     scrape_suggestion_box,
     read_suggestion_box,
 )
+from app.musicbrainz_tools import (
+    search_musicbrainz_artist,
+    get_musicbrainz_artist_releases,
+    get_musicbrainz_artist_relationships,
+)
 from app.adventure_tools import (
     start_adventure,
     update_adventure_state,
@@ -114,6 +119,13 @@ custom_google_search = CustomGoogleSearchTool()
 # User tools available to all agents
 _user_tools = [remember_preference, get_user_profile, delete_preference, clear_preferences]
 
+# MusicBrainz relational database tools
+_musicbrainz_tools = [
+    search_musicbrainz_artist,
+    get_musicbrainz_artist_releases,
+    get_musicbrainz_artist_relationships,
+]
+
 
 # ---------------------------------------------------------------------------
 # Sub-Agents
@@ -143,6 +155,7 @@ dj_agent = Agent(
         get_track_info,
         get_trending_tracks,
         get_trending_artists,
+        *_musicbrainz_tools,
         *_user_tools,
     ],
 )
@@ -168,12 +181,12 @@ music_expert = Agent(
     instruction=_load_prompt("music_expert"),
     tools=[
         get_now_playing,
-        # Last.fm primitives for music research
+        # Last.fm and MusicBrainz API access
         search_lastfm,
-        get_artist_info,
-        get_track_info,
         get_trending_tracks,
         get_trending_artists,
+        *_musicbrainz_tools,
+        # User interaction & Memory
         *_user_tools,
     ],
 )
