@@ -918,7 +918,7 @@ async def build_radio_sequence(
             disc_client = get_discord_client()
             disc_channel = disc_client.get_channel(channel_id) if disc_client else None
 
-            await replenish_radio_queue(state, channel=disc_channel)
+            await jit_replenish_queue(state, channel=disc_channel)
             await persist_radio_state_helper(guild_id, session_service, channel_id, state)
 
             while queue.qsize() >= 2:
