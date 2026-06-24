@@ -1,3 +1,4 @@
+import re
 import logging
 import asyncio
 from typing import Optional, Dict, Any, List
@@ -12,6 +13,18 @@ logger = logging.getLogger(__name__)
 # Initialize a global client (no auth needed for public searches)
 yt = YTMusic()
 
+def _extract_video_id(url: str) -> Optional[str]:
+    """Extracts a YouTube videoId from standard youtube URLs."""
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+        r'(?:youtu\.be\/)([0-9A-Za-z_-]{11})'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
+
 async def search_ytmusic_track(query: str, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
     """Searches YouTube Music for a track using fuzzy logic. Use this as a validator
     if a user requests a song and you need to find its exact canonical spelling, artist list, 
@@ -25,6 +38,26 @@ async def search_ytmusic_track(query: str, tool_context: Optional[ToolContext] =
     """
     logger.info(f"YTMusic search track: {query}")
     try:
+        # Check if the query is a direct YouTube URL
+        video_id = _extract_video_id(query)
+        if video_id:
+            logger.info(f"Extracted videoId from URL: {video_id}")
+            song = await asyncio.to_thread(yt.get_song, video_id)
+            details = song.get("videoDetails", {})
+            if not details:
+                return {"status": "error", "message": f"Could not fetch details for videoId {video_id}"}
+                
+            return {
+                "status": "success",
+                "title": details.get("title"),
+                "artists": [details.get("author")],
+                "album": None, # get_song doesn't reliably return album
+                "videoId": details.get("videoId"),
+                "duration": details.get("lengthSeconds"),
+                "isExplicit": False
+            }
+
+        # Otherwise do a fuzzy text search
         results = await asyncio.to_thread(yt.search, query, filter="songs")
         if not results:
             return {"status": "error", "message": f"No tracks found for '{query}'"}
