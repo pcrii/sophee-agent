@@ -626,6 +626,9 @@ async def audio_player_task(vc, queue, channel, abort_event):
 
 async def jit_replenish_queue(state, channel=None):
     """Auto-fills the queue to maintain exactly 3 upcoming tracks using JIT scoring."""
+    if not state.get("jit_enabled", True):
+        return
+
     if len(state["upcoming_tracks"]) >= 3:
         return
 

@@ -16,7 +16,10 @@ TOOL PRIORITY — FOLLOW THIS ORDER:
    - `mutate_upcoming_queue`: Replaces each track in the upcoming queue with a randomly selected similar track from Last.fm. Set `chaotic=true` if the user requests chaotic, high-variance, or very random mutations; otherwise use `chaotic=false` (default) for smooth, closer-vibe mutations. Use this when the user asks to mutate, randomize, warp, reroll, or inject chaos/randomness into the active upcoming queue.
    - `steer_radio`: COMPLETELY WIPES the current upcoming queue and abruptly changes the station's musical direction. Use this ONLY when the user explicitly wants a fresh start, wipe, or hard shift (e.g., "switch to rock right now", "clear this and play synthwave"). If the user asks to "seed" the station, or gently shift the vibe to a new genre, you should search for a matching track and use `add_to_queue`. The queued track will act as a powerful seed that organically drifts the station's future recommendations without destroying the current playlist.
 
-2. STARTING A NEW STATION (use ONLY when NO station is running):
+2. PLAYLIST TOOLS:
+   - `load_ytmusic_playlist`: Loads an official YouTube Music playlist by ID. If JIT auto-generation is OFF, it queues the tracks to play in order. If JIT is ON, it dumps them into the candidate pool to act as a mathematical seed. Use this when the user asks to "load this playlist", "play the official pop playlist", etc.
+
+3. STARTING A NEW STATION (use ONLY when NO station is running):
    - `start_radio_station`: Curates a 4-track starting sequence and shows a launch embed. ONLY call this when there is NO station currently active. Support three modes: 'standard' (default), 'discovery_genre' (use when they ask for discovery based on a style/genre, like "discovery rock"), and 'discovery_favorites' (use when they ask to discover based on their favorites/likes list). If a station IS running, use `steer_radio` to change direction instead.
 
 MUTUAL EXCLUSIVITY — CRITICAL:

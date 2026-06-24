@@ -733,6 +733,81 @@ class SkipView(discord.ui.View):
         if acknowledged:
             await self._reply(interaction, "\u23f9\ufe0f Station stopped.")
 
+    @discord.ui.button(label="⚙️", style=discord.ButtonStyle.secondary)
+    async def settings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild_id = interaction.guild.id
+        view = RadioSettingsView(guild_id)
+        await interaction.response.send_message("Radio Settings", view=view, ephemeral=True)
+
+
+class RadioSettingsView(discord.ui.View):
+    def __init__(self, guild_id):
+        super().__init__(timeout=300)
+        self.guild_id = guild_id
+        
+        from app.radio_state import active_radios
+        state = active_radios.get(self.guild_id, {})
+        jit_enabled = state.get("jit_enabled", True)
+        current_mode = state.get("mode", "standard")
+        
+        self.jit_btn = discord.ui.Button(
+            label="JIT Auto-Gen: " + ("ON" if jit_enabled else "OFF"), 
+            style=discord.ButtonStyle.success if jit_enabled else discord.ButtonStyle.secondary,
+            custom_id="toggle_jit",
+            row=0
+        )
+        self.jit_btn.callback = self.toggle_jit
+        self.add_item(self.jit_btn)
+        
+        # Add Select for Radio Mode
+        options = [
+            discord.SelectOption(label="Standard Mode", value="standard", description="Default mix", default=(current_mode=="standard")),
+            discord.SelectOption(label="Discovery Genre", value="discovery_genre", description="Explore specific genres", default=(current_mode=="discovery_genre")),
+            discord.SelectOption(label="Discovery Favorites", value="discovery_favorites", description="Explore based on likes", default=(current_mode=="discovery_favorites")),
+        ]
+        self.mode_select = discord.ui.Select(
+            placeholder="Choose Radio Mode...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            row=1
+        )
+        self.mode_select.callback = self.change_mode
+        self.add_item(self.mode_select)
+
+    async def change_mode(self, interaction: discord.Interaction):
+        from app.radio_state import active_radios
+        state = active_radios.get(self.guild_id)
+        if not state:
+            await interaction.response.send_message("No active radio.", ephemeral=True)
+            return
+            
+        new_mode = self.mode_select.values[0]
+        state["mode"] = new_mode
+        
+        for opt in self.mode_select.options:
+            opt.default = (opt.value == new_mode)
+            
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(f"Radio mode changed to '{new_mode}'. (Takes effect next JIT replenishment)", ephemeral=True)
+
+    async def toggle_jit(self, interaction: discord.Interaction):
+        from app.radio_state import active_radios
+        state = active_radios.get(self.guild_id)
+        if not state:
+            await interaction.response.send_message("No active radio.", ephemeral=True)
+            return
+            
+        current = state.get("jit_enabled", True)
+        state["jit_enabled"] = not current
+        
+        new_val = state["jit_enabled"]
+        self.jit_btn.label = "JIT Auto-Gen: " + ("ON" if new_val else "OFF")
+        self.jit_btn.style = discord.ButtonStyle.success if new_val else discord.ButtonStyle.secondary
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(f"JIT Auto-Generation is now {'ON' if new_val else 'OFF'}.", ephemeral=True)
+
+
 
 class AdventureView(discord.ui.View):
     """View containing interactive buttons for choices presented during an adventure."""

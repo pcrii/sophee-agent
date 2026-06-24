@@ -254,3 +254,67 @@ async def get_ytmusic_mood_playlists(category: str, tool_context: Optional[ToolC
     except Exception as e:
         logger.error(f"YTMusic mood playlists error: {e}")
         return {"status": "error", "message": str(e)}
+
+async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
+    """Loads a YouTube Music playlist. If the station's JIT generation is disabled,
+    it adds the tracks directly to the upcoming queue (maintaining order for single-artist albums, shuffling otherwise).
+    If JIT is enabled, it dumps the tracks into the candidate pool to act as mathematical seeds.
+    
+    Args:
+        playlist_id: The ID of the playlist (starts with PL or RD).
+        
+    Returns:
+        A dictionary containing the loaded status.
+    """
+    logger.info(f"YTMusic load playlist: {playlist_id}")
+    try:
+        playlist_data = await asyncio.to_thread(yt.get_playlist, playlist_id, limit=50)
+        tracks = playlist_data.get("tracks", [])
+        if not tracks:
+            return {"status": "error", "message": "No tracks found in playlist."}
+            
+        parsed_tracks = []
+        for t in tracks:
+            artists = [a.get("name") for a in t.get("artists", [])]
+            parsed_tracks.append({
+                "title": t.get("title"),
+                "artist": artists[0] if artists else "Unknown Artist",
+                "videoId": t.get("videoId")
+            })
+            
+        from app.radio_tools import _get_radio_state
+        state = _get_radio_state(tool_context)
+        if not state or not state.get("active"):
+            return {"status": "error", "message": "No active radio broadcast found."}
+            
+        jit_enabled = state.get("jit_enabled", True)
+        
+        if not jit_enabled:
+            # Check if single artist (album)
+            artists_set = set(t["artist"] for t in parsed_tracks)
+            is_single_artist = len(artists_set) == 1
+            
+            if not is_single_artist:
+                import random
+                random.shuffle(parsed_tracks)
+                
+            state.setdefault("upcoming_tracks", []).extend(parsed_tracks)
+            return {
+                "status": "success",
+                "message": f"JIT is OFF. Added {len(parsed_tracks)} tracks directly to the queue. Order maintained: {is_single_artist}."
+            }
+        else:
+            # JIT is ON. Add to candidate pool with high score
+            pool = state.setdefault("candidate_pool", [])
+            for pt in parsed_tracks:
+                # Add to candidate pool with high score so it gets picked
+                pool.append((pt, 50))
+                
+            return {
+                "status": "success",
+                "message": f"JIT is ON. Seeded {len(parsed_tracks)} playlist tracks into the candidate pool to organically steer the station."
+            }
+            
+    except Exception as e:
+        logger.error(f"YTMusic load playlist error: {e}")
+        return {"status": "error", "message": str(e)}
