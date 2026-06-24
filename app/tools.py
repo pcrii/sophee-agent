@@ -1141,28 +1141,31 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         latest_img = tool_context.state.get("latest_input_image")
         if latest_img:
             raw_bytes = base64.b64decode(latest_img["data"])
-            # Pass the text prompt and the reference image in a single turn, 
-            # which is the correct way to perform image-to-image editing in the API.
+            # Use the documented Interactions API payload for image editing
             input_data = [
-                prompt,
-                types.Part(
-                    inline_data=types.Blob(
-                        mime_type=latest_img["mime_type"],
-                        data=raw_bytes,
-                    )
-                )
+                {
+                    "type": "text",
+                    "text": prompt
+                },
+                {
+                    "type": "image",
+                    "data": base64.b64encode(raw_bytes).decode("utf-8"),
+                    "mime_type": latest_img["mime_type"]
+                }
             ]
             debug_info = {
                 "prompt": prompt,
                 "has_image": True,
                 "mime_type": latest_img["mime_type"],
-                "image_bytes_length": len(raw_bytes)
+                "image_bytes_length": len(raw_bytes),
+                "api": "interactions"
             }
         else:
             input_data = prompt
             debug_info = {
                 "prompt": prompt,
-                "has_image": False
+                "has_image": False,
+                "api": "interactions"
             }
             
         import json
@@ -1173,15 +1176,6 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         except Exception:
             pass
 
-        # Determine media resolution if there is a reference image
-        req_media_res = None
-        if latest_img:
-            if "ultra" in prompt.lower():
-                req_media_res = "MEDIA_RESOLUTION_ULTRA_HIGH"
-            else:
-                req_media_res = "MEDIA_RESOLUTION_HIGH"
-            logger.info("Using media_resolution=%s for reference image processing", req_media_res)
-
         # Map resolution to the model's native image_size string
         api_image_size = "512"
         if resolution.lower().strip() == "1k":
@@ -1189,24 +1183,27 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
 
         tool_context.state["latest_resolution"] = resolution
 
-        config_args = {
-            "response_modalities": ["IMAGE"],
-            "image_config": types.ImageConfig(image_size=api_image_size)
+        response_format = {
+            "type": "image",
+            "image_size": api_image_size
         }
-        if req_media_res:
-            config_args["media_resolution"] = req_media_res
 
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-image",
-            contents=input_data,
-            config=types.GenerateContentConfig(**config_args),
-        )
-
-        image_bytes = None
-        for part in response.candidates[0].content.parts:
-            if part.inline_data and part.inline_data.data:
-                image_bytes = part.inline_data.data
-                break
+        try:
+            interaction = await client.aio.interactions.create(
+                model="gemini-3.1-flash-image",
+                input=input_data,
+                response_format=response_format,
+            )
+            
+            # The interactions API exposes the output image cleanly on interaction.output_image
+            generated_image = interaction.output_image
+            image_bytes = None
+            if generated_image:
+                image_bytes = base64.b64decode(generated_image.data)
+                
+        except Exception as e:
+            logger.error("Error generating image via Interactions API: %s", e)
+            return {"status": "error", "message": f"Error generating image: {e}"}
 
         if image_bytes:
             part = types.Part(
