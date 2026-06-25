@@ -341,7 +341,11 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
             pool = state.setdefault("candidate_pool", [])
             for pt in parsed_tracks:
                 # Add to candidate pool with high score so it gets picked
-                pool.append((pt, 50))
+                pool.append({
+                    "track": pt,
+                    "base_score": 50,
+                    "age": 0
+                })
                 
             return {
                 "status": "success",
