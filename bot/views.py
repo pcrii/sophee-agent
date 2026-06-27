@@ -365,10 +365,6 @@ class StyleSelectionView(discord.ui.View):
     def make_callback(self, style_info):
         async def callback(interaction: discord.Interaction):
             await interaction.response.defer(thinking=True)
-            try:
-                await interaction.delete_original_response()
-            except Exception:
-                pass
             
             try:
                 style_str = style_info.get("style_string", "")
@@ -380,6 +376,25 @@ class StyleSelectionView(discord.ui.View):
                     "latest_input_image": None,
                     "latest_input_image_artifact": None,
                 })
+
+                # Update ephemeral interaction to show progress
+                try:
+                    await interaction.edit_original_response(content=f"🖌️ *Generating new style...*", view=None)
+                except Exception:
+                    pass
+
+                # Send public placeholder message
+                channel = interaction.channel
+                try:
+                    parent_msg = await channel.fetch_message(int(self.parent_msg_id))
+                except:
+                    parent_msg = channel
+                
+                placeholder = None
+                if isinstance(parent_msg, discord.Message):
+                    placeholder = await parent_msg.reply("🖌️ *Applying new style...*")
+                else:
+                    placeholder = await channel.send("🖌️ *Applying new style...*")
 
                 import re
                 # Strip out any existing 'art by...' string to prevent conflicting styles
@@ -403,18 +418,26 @@ class StyleSelectionView(discord.ui.View):
                         self.user_id, self.session_id,
                         self.runner, self.artifact_service, self.session_service, self.update_state_fn,
                     )
-                    channel = interaction.channel
-                    try:
-                        parent_msg = await channel.fetch_message(int(self.parent_msg_id))
-                    except:
-                        parent_msg = channel
                     
-                    if isinstance(parent_msg, discord.Message):
-                        sent_msg = await _send_image_with_thread(
-                            parent_msg, temp_path, f"\U0001f58c\ufe0f **Restyled**\n\n{response_text}", view, is_followup=False
-                        )
-                    else:
-                        sent_msg = await parent_msg.send(file=discord.File(temp_path), content=response_text, view=view)
+                    # Edit the placeholder with the final image
+                    sent_msg = await placeholder.edit(
+                        content=f"\U0001f58c\ufe0f **Restyled**\n\n{response_text}", 
+                        attachments=[discord.File(temp_path)], 
+                        view=view
+                    )
+                    
+                    # Create the thread
+                    if response_text:
+                        try:
+                            fetched_msg = await channel.fetch_message(sent_msg.id)
+                            active_thread = await fetched_msg.create_thread(name="Image Details")
+                            from bot.message_utils import send_message_in_chunks
+                            await send_message_in_chunks(active_thread, response_text, is_thread=True)
+                            await active_thread.edit(archived=True)
+                        except Exception as thread_err:
+                            logger.warning("Error creating thread: %s", thread_err)
+                            
+                    os.remove(temp_path)
                     
                     session = await self.session_service.get_session(app_name="app", user_id=self.user_id, session_id=self.session_id)
                     last_prompt = session.state.get("last_generated_prompt") if session else None
