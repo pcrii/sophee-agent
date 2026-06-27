@@ -377,11 +377,8 @@ class StyleSelectionView(discord.ui.View):
                     "latest_input_image_artifact": None,
                 })
 
-                # Update ephemeral interaction to show progress
-                try:
-                    await interaction.edit_original_response(content=f"🖌️ *Generating new style...*", view=None)
-                except Exception:
-                    pass
+                # We don't edit the ephemeral message to remove the view, so they can press multiple buttons!
+                pass
 
                 # Send public placeholder message
                 channel = interaction.channel
