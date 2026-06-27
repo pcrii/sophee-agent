@@ -337,9 +337,19 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
                 "message": f"JIT is OFF. Added {len(parsed_tracks)} tracks directly to the queue. Order maintained: {is_single_artist}."
             }
         else:
-            # JIT is ON. Add to candidate pool with high score
+            # JIT is ON. 
+            import random
+            random.shuffle(parsed_tracks)
+            
+            # Enqueue the first 4 tracks directly to the playhead
+            seed_tracks = parsed_tracks[:4]
+            candidate_tracks = parsed_tracks[4:]
+            
+            state.setdefault("upcoming_tracks", []).extend(seed_tracks)
+            
+            # Dump the rest into the candidate pool
             pool = state.setdefault("candidate_pool", [])
-            for pt in parsed_tracks:
+            for pt in candidate_tracks:
                 # Add to candidate pool with high score so it gets picked
                 pool.append({
                     "track": pt,
@@ -349,7 +359,7 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
                 
             return {
                 "status": "success",
-                "message": f"JIT is ON. Seeded {len(parsed_tracks)} playlist tracks into the candidate pool to organically steer the station."
+                "message": f"JIT is ON. Seeded {len(seed_tracks)} playlist tracks directly to the queue, and placed {len(candidate_tracks)} into the candidate pool to organically steer the station."
             }
             
     except Exception as e:

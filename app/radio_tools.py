@@ -234,8 +234,9 @@ async def steer_radio(direction: str, tool_context: ToolContext) -> dict:
             "message": "No active radio broadcast found for this server.",
         }
 
-    # Clear upcoming tracks
+    # Clear upcoming tracks and the JIT candidate pool
     state["upcoming_tracks"] = []
+    state["candidate_pool"] = [] # Consider all queued candidates influentially dead
     state["playlist_thesis"] = direction
 
     direction_lower = direction.lower().strip()

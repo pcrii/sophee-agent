@@ -901,6 +901,12 @@ async def jit_replenish_queue(state, channel=None):
 
             score = base_score - (age * 0.5)
 
+            # Sliding window penalty for Artist Dominance
+            recent_artists = [t.get("artist", "").lower().strip() for t in played_tracks[-10:]]
+            artist_count = recent_artists.count(artist.lower())
+            if artist_count > 0:
+                score -= (artist_count * 15)
+
             if artist.lower() in liked_artists:
                 score += 10
             if artist.lower() in disliked_artists:

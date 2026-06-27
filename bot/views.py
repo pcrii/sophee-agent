@@ -613,56 +613,7 @@ class SkipView(discord.ui.View):
         except (discord.NotFound, discord.HTTPException) as e:
             logger.warning("Could not send control reply: %s", e)
 
-    @discord.ui.button(label="Like", style=discord.ButtonStyle.secondary, emoji="👍")
-    async def like_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        acknowledged = await self._ack(interaction)
-        if not acknowledged:
-            return
-
-        guild_id = interaction.guild.id
-        from app.radio_state import active_radios, now_playing_cache
-        state = active_radios.get(guild_id)
-        if not state or not state.get("active"):
-            await self._reply(interaction, "No active radio station.")
-            return
-
-        current = now_playing_cache.get(guild_id, state.get("current_track"))
-        if not current:
-            await self._reply(interaction, "No song currently playing.")
-            return
-
-        parts = current.split(" - ", 1)
-        artist = parts[0].strip()
-        title = parts[1].strip() if len(parts) > 1 else ""
-
-        liked = state.setdefault("liked_tracks", [])
-        disliked = state.setdefault("disliked_tracks", [])
-
-        # Remove from disliked if present
-        state["disliked_tracks"] = [t for t in disliked if not (t.get("artist") == artist and t.get("title") == title)]
-
-        # Add to liked if not already present
-        if not any(t.get("artist") == artist and t.get("title") == title for t in liked):
-            liked.append({"artist": artist, "title": title})
-            
-        # YouTube Music Sync
-        try:
-            from app.ytmusic_tools import search_ytmusic_track
-            from app.auth import get_ytm_client
-            import asyncio
-            
-            user_yt = get_ytm_client(interaction.user.id)
-            if user_yt:
-                track = await search_ytmusic_track(current)
-                if track and track.get("videoId"):
-                    await asyncio.to_thread(user_yt.rate_song, track["videoId"], "LIKE")
-        except Exception as e:
-            from bot.audio import logger
-            logger.warning(f"Failed to sync LIKE to YouTube Music for user {interaction.user.id}: {e}")
-
-        await self._reply(interaction, f"👍 Liked '{current}'. Future tracks will favor similar selections.")
-
-    @discord.ui.button(label="Dislike", style=discord.ButtonStyle.secondary, emoji="👎")
+    @discord.ui.button(label="Dislike / Skip", style=discord.ButtonStyle.danger, emoji="👎")
     async def dislike_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         acknowledged = await self._ack(interaction)
         if not acknowledged:
@@ -684,60 +635,17 @@ class SkipView(discord.ui.View):
         artist = parts[0].strip()
         title = parts[1].strip() if len(parts) > 1 else ""
 
-        liked = state.setdefault("liked_tracks", [])
         disliked = state.setdefault("disliked_tracks", [])
-
-        # Remove from liked if present
-        state["liked_tracks"] = [t for t in liked if not (t.get("artist") == artist and t.get("title") == title)]
 
         # Add to disliked if not already present
         if not any(t.get("artist") == artist and t.get("title") == title for t in disliked):
             disliked.append({"artist": artist, "title": title})
             
-        # YouTube Music Sync
-        try:
-            from app.ytmusic_tools import search_ytmusic_track
-            from app.auth import get_ytm_client
-            import asyncio
-            
-            user_yt = get_ytm_client(interaction.user.id)
-            if user_yt:
-                track = await search_ytmusic_track(current)
-                if track and track.get("videoId"):
-                    await asyncio.to_thread(user_yt.rate_song, track["videoId"], "DISLIKE")
-        except Exception as e:
-            from bot.audio import logger
-            logger.warning(f"Failed to sync DISLIKE to YouTube Music for user {interaction.user.id}: {e}")
+        # Skip the track
+        if self.vc and self.vc.is_playing():
+            self.vc.stop()
 
-        await self._reply(interaction, f"👎 Disliked '{current}'. Future tracks by this artist or similar will be avoided.")
-
-    @discord.ui.button(label="Favorite", style=discord.ButtonStyle.secondary, emoji="💖")
-    async def favorite_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        acknowledged = await self._ack(interaction)
-        if not acknowledged:
-            return
-
-        guild_id = interaction.guild.id
-        from app.radio_state import active_radios, now_playing_cache
-        state = active_radios.get(guild_id)
-        if not state or not state.get("active"):
-            await self._reply(interaction, "No active radio station.")
-            return
-
-        current = now_playing_cache.get(guild_id, state.get("current_track"))
-        if not current:
-            await self._reply(interaction, "No song currently playing.")
-            return
-
-        parts = current.split(" - ", 1)
-        artist = parts[0].strip()
-        title = parts[1].strip() if len(parts) > 1 else ""
-
-        user_id = str(interaction.user.id)
-        from bot.audio import add_user_favorite_track
-        add_user_favorite_track(user_id, artist, title)
-
-        await self._reply(interaction, f"💖 Added '{current}' to your persistent favorites list!")
+        await self._reply(interaction, f"👎 Disliked & Skipped '{current}'. Future tracks by this artist or similar will be avoided.")
 
     @discord.ui.button(label="Skip", style=discord.ButtonStyle.danger, emoji="\u23ed\ufe0f")
     async def skip_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -829,13 +737,24 @@ class RadioSettingsView(discord.ui.View):
             return
             
         current = state.get("jit_enabled", True)
-        state["jit_enabled"] = not current
+        new_val = not current
+        state["jit_enabled"] = new_val
         
-        new_val = state["jit_enabled"]
+        extra_msg = ""
+        if new_val:
+            upcoming = state.get("upcoming_tracks", [])
+            if len(upcoming) > 4:
+                to_pool = upcoming[4:]
+                state["upcoming_tracks"] = upcoming[:4]
+                pool = state.setdefault("candidate_pool", [])
+                for t in to_pool:
+                    pool.append({"track": t, "base_score": 50, "age": 0})
+                extra_msg = f" Moved {len(to_pool)} tracks to the candidate pool to allow JIT to steer."
+        
         self.jit_btn.label = "JIT Auto-Gen: " + ("ON" if new_val else "OFF")
         self.jit_btn.style = discord.ButtonStyle.success if new_val else discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
-        await interaction.followup.send(f"JIT Auto-Generation is now {'ON' if new_val else 'OFF'}.", ephemeral=True)
+        await interaction.followup.send(f"JIT Auto-Generation is now {'ON' if new_val else 'OFF'}.{extra_msg}", ephemeral=True)
 
 
 
