@@ -388,7 +388,7 @@ class StyleSelectionView(discord.ui.View):
                 clean_prompt = re.sub(r'[\,\.\s]*art by.*$', '', clean_prompt, flags=re.IGNORECASE)
                 clean_prompt = clean_prompt.strip()
 
-                run_prompt = f"Apply this specific artistic style: '{style_str}' to the prompt: '{clean_prompt}'."
+                run_prompt = f"I want to restyle an image. The old prompt is: '{clean_prompt}'. Please completely rewrite this prompt to STRIP OUT all old style language (lighting, aesthetic, atmosphere, medium) so that only the core subject remains, and then apply this specific new artistic style to it: '{style_str}'."
                 
                 temp_path, response_text, new_image_key = await _run_agent_and_get_image(
                     self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
