@@ -307,6 +307,39 @@ async def download_song_async(query):
         return score
 
     def extract():
+        is_direct_url = query.startswith("http://") or query.startswith("https://")
+        
+        if is_direct_url:
+            candidates_report = []
+            final_path = None
+            try:
+                with yt_dlp.YoutubeDL(base_ydl_opts) as ydl:
+                    downloaded_info = ydl.extract_info(query, download=True)
+                    f_path = ydl.prepare_filename(downloaded_info)
+                    
+                    if os.path.exists(f_path):
+                        final_path = f_path
+                    else:
+                        for ext in ["webm", "m4a", "mp3", "opus"]:
+                            candidate_path = f"{out_path}.{ext}"
+                            if os.path.exists(candidate_path):
+                                final_path = candidate_path
+                                break
+                    
+                    title = downloaded_info.get("title", "Unknown title")
+                    duration = downloaded_info.get("duration")
+                    
+                    if final_path:
+                        candidates_report.append(f"\u2705 **[DIRECT DOWNLOAD]** `{title}` ({duration}s)\n\U0001f517 {query}")
+                    else:
+                        candidates_report.append(f"\u26a0\ufe0f **[DOWNLOAD FAILED]** `{title}` ({duration}s) - File not found\n\U0001f517 {query}")
+            except Exception as e:
+                logger.warning("Failed to download URL %s: %s", query, e)
+                err_msg = str(e).split("\n")[0][:50]
+                candidates_report.append(f"\u26a0\ufe0f **[DOWNLOAD FAILED]** Direct URL - {err_msg}\n\U0001f517 {query}")
+            
+            return final_path, "\n".join(candidates_report)
+
         search_opts = {
             **base_ydl_opts,
             "skip_download": True,
