@@ -106,6 +106,26 @@ async def _run_agent_and_get_image(
     return None, response_text, None
 
 
+async def _run_agent_and_get_text(runner, user_id, session_id, prompt_text):
+    """Runs the agent with a prompt and returns the text response."""
+    response_text = ""
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=types.Content(
+            role="user", parts=[types.Part.from_text(text=prompt_text)]
+        ),
+    ):
+        if event.is_final_response():
+            response_parts = (
+                event.content.parts
+                if (event.content and event.content.parts)
+                else []
+            )
+            response_text += "".join([p.text for p in response_parts if p.text])
+    return response_text
+
+
 async def _send_image_with_thread(
     interaction_or_message, temp_file_path, response_text, view, label="Image Details",
     *, is_followup=True,
@@ -248,6 +268,176 @@ class ImageEditModal(discord.ui.Modal, title="Edit Image"):
 # Image View (Edit / Reroll / Restyle buttons)
 # ---------------------------------------------------------------------------
 
+
+async def _trigger_restyle_options(interaction, parent_msg_id, original_prompt, user_id, session_id, runner, artifact_service, session_service, update_state_fn, is_reroll=False):
+    import random
+    import json
+    import os
+    
+    catalog_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "artists_catalog.json"
+    )
+    if not os.path.exists(catalog_path):
+        await interaction.followup.send("Artists catalog not found.", ephemeral=True)
+        return
+        
+    try:
+        with open(catalog_path, encoding="utf-8") as f:
+            catalog = json.load(f)
+            
+        mediums = [name for name, cat in catalog.items() if cat == "medium_and_line"]
+        lightings = [name for name, cat in catalog.items() if cat == "lighting_and_atmosphere"]
+        genres = [name for name, cat in catalog.items() if cat == "genre_and_subject"]
+        
+        style_strings = []
+        for _ in range(3):
+            m = random.choice(mediums)
+            l = random.choice(lightings)
+            g = random.choice(genres)
+            style_strings.append(f"art by {m}, {l}, and {g}")
+            
+        prompt = f"""Here are 3 artistic style combinations based on the prompt '{original_prompt}':
+1. {style_strings[0]}
+2. {style_strings[1]}
+3. {style_strings[2]}
+
+For each, write a 1-sentence blurb describing what this visual combination looks like. Return STRICTLY a JSON array of 3 objects, each with 'style_string' (the exact string provided above) and 'blurb'. Use markdown ```json format."""
+
+        response_text = await _run_agent_and_get_text(runner, user_id, session_id, prompt)
+        
+        # parse json
+        try:
+            # strip markdown if present
+            if "```json" in response_text:
+                json_str = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text:
+                json_str = response_text.split("```")[1].strip()
+            else:
+                json_str = response_text.strip()
+                
+            styles_data = json.loads(json_str)
+        except Exception as parse_e:
+            logger.error("Failed to parse JSON for restyle options: %s\nText: %s", parse_e, response_text)
+            await interaction.followup.send("Failed to generate style options.", ephemeral=True)
+            return
+
+        embed = discord.Embed(title="\U0001f58c\ufe0f Choose a New Style", color=0x2b2d31)
+        for idx, style_info in enumerate(styles_data):
+            embed.add_field(name=f"Style {idx+1}", value=f"**{style_info.get('style_string')}**\n{style_info.get('blurb')}", inline=False)
+            
+        view = StyleSelectionView(
+            styles_data, original_prompt, user_id, session_id,
+            runner, artifact_service, session_service, update_state_fn, parent_msg_id
+        )
+        
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        
+    except Exception as e:
+        logger.error("Error generating style options: %s", e)
+        await interaction.followup.send(f"Error: {e}", ephemeral=True)
+
+
+class StyleSelectionView(discord.ui.View):
+    def __init__(self, styles_data, original_prompt, user_id, session_id, runner, artifact_service, session_service, update_state_fn, parent_msg_id):
+        super().__init__(timeout=None)
+        self.styles_data = styles_data
+        self.original_prompt = original_prompt
+        self.user_id = user_id
+        self.session_id = session_id
+        self.runner = runner
+        self.artifact_service = artifact_service
+        self.session_service = session_service
+        self.update_state_fn = update_state_fn
+        self.parent_msg_id = parent_msg_id
+
+        # Add buttons for each style dynamically
+        for idx, style_info in enumerate(styles_data):
+            btn = discord.ui.Button(label=f"Style {idx + 1}", style=discord.ButtonStyle.primary)
+            btn.callback = self.make_callback(style_info)
+            self.add_item(btn)
+        
+        reroll_btn = discord.ui.Button(label="Reroll Options", style=discord.ButtonStyle.secondary, emoji="🎲")
+        reroll_btn.callback = self.reroll_callback
+        self.add_item(reroll_btn)
+
+    def make_callback(self, style_info):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer(thinking=True)
+            try:
+                await interaction.delete_original_response()
+            except Exception:
+                pass
+            
+            try:
+                style_str = style_info.get("style_string", "")
+                await self.update_state_fn(self.user_id, self.session_id, {
+                    "rolled_style": style_str,
+                    "force_style_roll": True,
+                    "art_director_mode": "simple",
+                    "start_fresh_image": False,
+                    "latest_input_image": None,
+                    "latest_input_image_artifact": None,
+                })
+
+                run_prompt = f"Apply this specific artistic style: '{style_str}' to the prompt: '{self.original_prompt}'."
+                
+                temp_path, response_text, new_image_key = await _run_agent_and_get_image(
+                    self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
+                )
+                
+                await self.update_state_fn(self.user_id, self.session_id, {
+                    "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
+                })
+
+                if temp_path:
+                    view = ImageView(
+                        self.user_id, self.session_id,
+                        self.runner, self.artifact_service, self.session_service, self.update_state_fn,
+                    )
+                    channel = interaction.channel
+                    try:
+                        parent_msg = await channel.fetch_message(int(self.parent_msg_id))
+                    except:
+                        parent_msg = channel
+                    
+                    if isinstance(parent_msg, discord.Message):
+                        sent_msg = await _send_image_with_thread(
+                            parent_msg, temp_path, f"\U0001f58c\ufe0f **Restyled**\n\n{response_text}", view, is_followup=False
+                        )
+                    else:
+                        sent_msg = await parent_msg.send(file=discord.File(temp_path), content=response_text, view=view)
+                    
+                    session = await self.session_service.get_session(app_name="app", user_id=self.user_id, session_id=self.session_id)
+                    last_prompt = session.state.get("last_generated_prompt") if session else None
+                    await save_image_metadata(
+                        message_id=str(sent_msg.id),
+                        prompt=last_prompt or self.original_prompt or "restyled image",
+                        style=style_str,
+                        resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
+                        image_artifact=new_image_key,
+                        session_id=self.session_id,
+                    )
+                else:
+                    await interaction.followup.send(response_text or "Failed to restyle image.", ephemeral=True)
+            except Exception as e:
+                logger.error("Error generating chosen style: %s", e)
+                await interaction.followup.send(f"Error generating style: {e}", ephemeral=True)
+
+        return callback
+
+    async def reroll_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            await interaction.delete_original_response()
+        except:
+            pass
+        await _trigger_restyle_options(
+            interaction, self.parent_msg_id, self.original_prompt, self.user_id, self.session_id,
+            self.runner, self.artifact_service, self.session_service, self.update_state_fn,
+            is_reroll=True
+        )
+
+
 class ImageView(discord.ui.View):
     def __init__(self, user_id, session_id, runner, artifact_service, session_service, update_state_fn):
         super().__init__(timeout=None)
@@ -335,72 +525,30 @@ class ImageView(discord.ui.View):
             logger.error("Error in reroll: %s", e)
             await interaction.followup.send(f"Error in reroll: {e}")
 
-    @discord.ui.button(label="Restyle", style=discord.ButtonStyle.secondary, emoji="\U0001f58c\ufe0f")
+    @discord.ui.button(label="Restyle", style=discord.ButtonStyle.secondary, emoji="🖌️")
     async def restyle_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             parent_msg_id = str(interaction.message.id)
             ref_meta = await get_image_metadata(parent_msg_id)
-
+            
             original_prompt = ""
             active_session_id = self.session_id
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
                 if ref_meta.get("session_id"):
                     active_session_id = ref_meta.get("session_id")
-                await self.update_state_fn(self.user_id, active_session_id, {
-                    "rolled_style": ref_meta.get("style"),
-                    "latest_resolution": ref_meta.get("resolution"),
-                    "force_style_roll": True,
-                    "art_director_mode": "simple",
-                    "start_fresh_image": False,
-                    "latest_input_image": None,
-                    "latest_input_image_artifact": None,
-                })
-            else:
-                await self.update_state_fn(self.user_id, active_session_id, {
-                    "force_style_roll": True, "art_director_mode": "simple", "start_fresh_image": False, "latest_input_image": None, "latest_input_image_artifact": None,
-                })
-
-            if original_prompt:
-                run_prompt = f"Roll a random artist inspiration style and apply it to the prompt: '{original_prompt}'."
-            else:
-                run_prompt = "Roll a random artist inspiration style and apply it to the previous prompt."
-
-            temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                self.runner, self.artifact_service, self.user_id, active_session_id, run_prompt
+                    
+            if not original_prompt:
+                original_prompt = "restyled image"
+                
+            await _trigger_restyle_options(
+                interaction, parent_msg_id, original_prompt, self.user_id, active_session_id,
+                self.runner, self.artifact_service, self.session_service, self.update_state_fn
             )
-
-            await self.update_state_fn(self.user_id, active_session_id, {
-                "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
-            })
-
-            if temp_path:
-                view = ImageView(
-                    self.user_id, active_session_id,
-                    self.runner, self.artifact_service, self.session_service, self.update_state_fn,
-                )
-                sent_msg = await _send_image_with_thread(
-                    interaction, temp_path, f"\U0001f58c\ufe0f **Restyle**\n\n{response_text}", view,
-                )
-
-                session = await self.session_service.get_session(
-                    app_name="app", user_id=self.user_id, session_id=active_session_id
-                )
-                last_prompt = session.state.get("last_generated_prompt") if session else None
-                await save_image_metadata(
-                    message_id=str(sent_msg.id),
-                    prompt=last_prompt or original_prompt or "restyled image",
-                    style=session.state.get("rolled_style") if session else None,
-                    resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
-                    image_artifact=new_image_key,
-                    session_id=active_session_id,
-                )
-            else:
-                await interaction.followup.send(response_text or "Failed to restyle image.")
         except Exception as e:
-            logger.error("Error restyling image: %s", e)
-            await interaction.followup.send(f"Error restyling image: {e}")
+            logger.error("Error triggering restyle: %s", e)
+            await interaction.followup.send(f"Error triggering restyle: {e}", ephemeral=True)
 
 
 # ---------------------------------------------------------------------------
