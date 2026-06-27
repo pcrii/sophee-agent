@@ -727,114 +727,86 @@ async def jit_replenish_queue(state, channel=None):
         new_candidates = []
 
         # Gather new candidates based on mode
-        if mode == "discovery_favorites":
-            if fav_tracks:
-                sample_favs = random.sample(fav_tracks, min(len(fav_tracks), 2))
-                for ft in sample_favs:
-                    similar = await fetch_lastfm_similar_tracks(ft["artist"], ft["title"], limit=20)
-                    for track in similar:
-                        new_candidates.append((track, 15))
-            else:
-                pop_tracks = await fetch_lastfm_tag_tracks("pop", limit=20)
-                for track in pop_tracks:
-                    new_candidates.append((track, 2))
-
-        elif mode == "discovery_genre":
-            if seed_tags:
-                for tag_entry in seed_tags:
-                    if isinstance(tag_entry, dict):
-                        tag_name = tag_entry.get("tag", genre)
-                        tag_weight = float(tag_entry.get("weight", 1.0))
-                    else:
-                        tag_name = str(tag_entry)
-                        tag_weight = 1.0
-
-                    tag_tracks = await fetch_lastfm_tag_tracks(tag_name, limit=20)
-                    for idx, track in enumerate(tag_tracks):
-                        popularity_penalty = -8 if idx < 5 else 0
-                        new_candidates.append((track, (10 * tag_weight) + popularity_penalty))
-            else:
-                tag_tracks = await fetch_lastfm_tag_tracks(genre, limit=20)
-                for idx, track in enumerate(tag_tracks):
-                    popularity_penalty = -8 if idx < 5 else 0
-                    new_candidates.append((track, 10 + popularity_penalty))
-
-            if liked_tracks:
-                sample_liked = random.sample(liked_tracks, min(len(liked_tracks), 2))
-                for lt in sample_liked:
-                    similar = await fetch_lastfm_similar_tracks(lt["artist"], lt["title"], limit=15)
-                    for track in similar:
-                        new_candidates.append((track, 12))
-
-        else:  # "standard"
-            if liked_tracks:
-                sample_liked = random.sample(liked_tracks, min(len(liked_tracks), 2))
-                for lt in sample_liked:
-                    similar = await fetch_lastfm_similar_tracks(lt["artist"], lt["title"], limit=20)
-                    for track in similar:
-                        new_candidates.append((track, 15))
-
+        if mode == "ytm_native":
+            # Purely driven by YouTube Music recommendations from recently played history
             if played_tracks:
-                recent_played = played_tracks[-5:]
-                requested_tracks = [t for t in recent_played if t.get("is_request")]
-                
-                influencers = []
-                if requested_tracks:
-                    influencers.append(random.choice(requested_tracks))
-                    remaining = [t for t in recent_played if t not in influencers]
-                    if remaining:
-                        influencers.append(random.choice(remaining))
-                else:
-                    influencers = random.sample(recent_played, min(len(recent_played), 2))
+                recent_played = played_tracks[-3:]
+                for infl in recent_played:
+                    vid = infl.get("videoId")
+                    if not vid:
+                        yt_res = await search_ytmusic_track(f"{infl.get('artist')} {infl.get('title')}")
+                        if yt_res.get("status") == "success":
+                            vid = yt_res.get("videoId")
+                            infl["videoId"] = vid
                     
-                for infl in influencers:
-                    # Filter out actively disliked
-                    is_infl_disliked = any(
-                        t.get("artist", "").lower().strip() == infl.get("artist", "").lower().strip()
-                        and t.get("title", "").lower().strip() == infl.get("title", "").lower().strip()
-                        for t in disliked_tracks
-                    )
-                    if not is_infl_disliked:
-                        # 1. Last.fm similarity
-                        similar = await fetch_lastfm_similar_tracks(infl["artist"], infl["title"], limit=15)
-                        for track in similar:
-                            new_candidates.append((track, 10))
-                            
-                        # 2. YT Music similarity (needs videoId)
-                        vid = infl.get("videoId")
-                        if not vid:
-                            yt_res = await search_ytmusic_track(f"{infl.get('artist')} {infl.get('title')}")
-                            if yt_res.get("status") == "success":
-                                vid = yt_res.get("videoId")
-                                infl["videoId"] = vid 
-                                
-                        if vid:
-                            yt_radio = await generate_ytmusic_radio(vid)
-                            if yt_radio.get("status") == "success":
-                                for track in yt_radio.get("tracks", [])[:15]:
-                                    new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 12))
+                    if vid:
+                        yt_radio = await generate_ytmusic_radio(vid)
+                        if yt_radio.get("status") == "success":
+                            for track in yt_radio.get("tracks", [])[:20]:
+                                new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 15))
+            else:
+                # If nothing has played yet, seed from the thesis via YTM search
+                yt_res = await search_ytmusic_track(genre)
+                if yt_res.get("status") == "success" and yt_res.get("videoId"):
+                    yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
+                    if yt_radio.get("status") == "success":
+                        for track in yt_radio.get("tracks", [])[:20]:
+                            new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 15))
 
+        elif mode == "strict_thesis":
+            # Completely ignores recently played history. Purely driven by the LLM seed tags.
+            tags_to_search = []
             if seed_tags:
                 for tag_entry in seed_tags:
                     if isinstance(tag_entry, dict):
-                        tag_name = tag_entry.get("tag", genre)
-                        tag_weight = float(tag_entry.get("weight", 1.0))
+                        tags_to_search.append((tag_entry.get("tag", genre), float(tag_entry.get("weight", 1.0))))
                     else:
-                        tag_name = str(tag_entry)
-                        tag_weight = 1.0
-
-                    tag_tracks = await fetch_lastfm_tag_tracks(tag_name, limit=20)
-                    for track in tag_tracks:
-                        new_candidates.append((track, 8 * tag_weight))
+                        tags_to_search.append((str(tag_entry), 1.0))
             else:
-                tag_tracks = await fetch_lastfm_tag_tracks(genre, limit=20)
-                for track in tag_tracks:
-                    new_candidates.append((track, 5))
+                tags_to_search.append((genre, 1.0))
+
+            for tag_name, weight in tags_to_search:
+                yt_res = await search_ytmusic_track(tag_name)
+                if yt_res.get("status") == "success" and yt_res.get("videoId"):
+                    yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
+                    if yt_radio.get("status") == "success":
+                        for track in yt_radio.get("tracks", [])[:15]:
+                            new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 10 * weight))
+
+        else:  # "standard" (Hybrid of history drift and thesis anchoring)
+            if played_tracks:
+                recent_played = played_tracks[-3:]
+                for infl in recent_played:
+                    vid = infl.get("videoId")
+                    if not vid:
+                        yt_res = await search_ytmusic_track(f"{infl.get('artist')} {infl.get('title')}")
+                        if yt_res.get("status") == "success":
+                            vid = yt_res.get("videoId")
+                            infl["videoId"] = vid 
+                            
+                    if vid:
+                        yt_radio = await generate_ytmusic_radio(vid)
+                        if yt_radio.get("status") == "success":
+                            for track in yt_radio.get("tracks", [])[:10]:
+                                new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 12))
+
+            # Mix in the thesis tags to prevent total drift
+            if seed_tags:
+                tag = seed_tags[0] if not isinstance(seed_tags[0], dict) else seed_tags[0].get("tag", genre)
+                yt_res = await search_ytmusic_track(tag)
+                if yt_res.get("status") == "success" and yt_res.get("videoId"):
+                    yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
+                    if yt_radio.get("status") == "success":
+                        for track in yt_radio.get("tracks", [])[:10]:
+                            new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 10))
 
         if not new_candidates and not state["candidate_pool"]:
-            pop_tracks = await fetch_lastfm_tag_tracks("pop", limit=20)
-            for track in pop_tracks:
-                new_candidates.append((track, 2))
+            yt_res = await search_ytmusic_track("popular hits")
+            if yt_res.get("status") == "success" and yt_res.get("videoId"):
+                yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
+                if yt_radio.get("status") == "success":
+                    for track in yt_radio.get("tracks", [])[:10]:
+                        new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 2))
 
         # Add new candidates to the pool
         for track, base_score in new_candidates:

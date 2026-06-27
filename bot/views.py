@@ -699,9 +699,9 @@ class RadioSettingsView(discord.ui.View):
         
         # Add Select for Radio Mode
         options = [
-            discord.SelectOption(label="Standard Mode", value="standard", description="Default mix", default=(current_mode=="standard")),
-            discord.SelectOption(label="Discovery Genre", value="discovery_genre", description="Explore specific genres", default=(current_mode=="discovery_genre")),
-            discord.SelectOption(label="Discovery Favorites", value="discovery_favorites", description="Explore based on likes", default=(current_mode=="discovery_favorites")),
+            discord.SelectOption(label="Standard Mode", value="standard", description="Hybrid mix (Drift + Thesis)", default=(current_mode=="standard")),
+            discord.SelectOption(label="YTM Native Radio", value="ytm_native", description="Organic discovery (YTM Algorithm)", default=(current_mode=="ytm_native")),
+            discord.SelectOption(label="Strict Thesis", value="strict_thesis", description="Strictly adhere to the prompt", default=(current_mode=="strict_thesis")),
         ]
         self.mode_select = discord.ui.Select(
             placeholder="Choose Radio Mode...",

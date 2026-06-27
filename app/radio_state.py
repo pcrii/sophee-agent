@@ -96,3 +96,45 @@ def is_station_active(guild_id: int) -> bool:
     """Returns True if a radio station is currently broadcasting for this guild."""
     state = active_radios.get(guild_id)
     return bool(state and state.get("active"))
+
+def save_hibernated_radio(guild_id: int) -> bool:
+    """Saves the current active radio state to a JSON file for hibernation."""
+    import json
+    import os
+    state = active_radios.get(guild_id)
+    if not state:
+        return False
+        
+    # Remove transient bot/voice client objects if any
+    safe_state = {k: v for k, v in state.items() if not k.startswith("_")}
+    
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    os.makedirs(data_dir, exist_ok=True)
+    
+    file_path = os.path.join(data_dir, f"radio_hibernate_{guild_id}.json")
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(safe_state, f)
+        return True
+    except Exception as e:
+        logger.error("Failed to save hibernated radio: %s", e)
+        return False
+
+def load_hibernated_radio(guild_id: int) -> dict | None:
+    """Loads a hibernated radio state from JSON file."""
+    import json
+    import os
+    
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    file_path = os.path.join(data_dir, f"radio_hibernate_{guild_id}.json")
+    
+    if not os.path.exists(file_path):
+        return None
+        
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        return state
+    except Exception as e:
+        logger.error("Failed to load hibernated radio: %s", e)
+        return None

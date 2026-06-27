@@ -755,8 +755,8 @@ async def get_trending_artists(country: str = "", tool_context: ToolContext = No
 # Station Management
 # ---------------------------------------------------------------------------
 
-async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, mode: str = "standard") -> dict:
-    """Curates a new radio station playlist and stages it for launch.
+async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, mode: str = "standard", resume_hibernated: bool = False) -> dict:
+    """Curates a new radio station playlist and stages it for launch, OR resumes a hibernated station.
     ONLY call this when NO station is currently running. If a station is already
     active, the model should use `steer_radio` to change direction instead.
 
@@ -766,13 +766,14 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
 
     Args:
         playlist_thesis: The theme, concept, vibe, or thesis of the music requested
-                         (e.g., 'synthwave', 'rainy day cafe').
-        mode: The station mode ('standard', 'discovery_genre', 'discovery_favorites').
+                         (e.g., 'synthwave', 'rainy day cafe'). Ignore this if resume_hibernated is True.
+        mode: The station mode ('standard', 'ytm_native', 'strict_thesis').
+        resume_hibernated: If True, attempts to load and resume the user's previously hibernated radio session instead of creating a new one.
 
     Returns:
-        A dictionary containing the curated tracklist, or an error if a station is already active.
+        A dictionary containing the curated tracklist (or the resumed state), or an error if a station is already active.
     """
-    from app.radio_state import is_station_active, resolve_guild_id
+    from app.radio_state import is_station_active, resolve_guild_id, load_hibernated_radio
     from bot.audio import get_user_favorites
 
     # --- Station-active guard ---
@@ -796,6 +797,24 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
                 "`show_station_queue` to see what's coming up. "
                 "Do NOT call start_radio_station while a station is active."
             ),
+        }
+
+    if resume_hibernated:
+        hibernated_state = load_hibernated_radio(guild_id)
+        if not hibernated_state:
+            return {
+                "status": "error",
+                "message": "No hibernated radio session found to resume."
+            }
+        
+        # Stage the hibernated state in the ADK session so the bot can pick it up
+        session.state["staged_radio"] = hibernated_state
+        return {
+            "status": "success",
+            "message": f"Successfully loaded hibernated radio: '{hibernated_state.get('playlist_thesis')}'. The embed has been staged for the user to click Start.",
+            "playlist_thesis": hibernated_state.get("playlist_thesis"),
+            "mode": hibernated_state.get("mode"),
+            "upcoming_tracks": [{"artist": t.get("artist"), "title": t.get("title")} for t in hibernated_state.get("upcoming_tracks", [])[:4]],
         }
 
     # --- Curate the playlist ---

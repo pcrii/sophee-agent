@@ -314,10 +314,10 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
     """Changes the curation algorithm/mode of the active radio station.
     Use this when the user asks to change, swap, or switch the radio algorithm, playlist algorithm,
-    or playback mode (e.g., 'standard', 'discovery_genre', or 'discovery_favorites').
+    or playback mode (e.g., 'standard', 'ytm_native', or 'strict_thesis').
 
     Args:
-        mode: The new mode to switch to ('standard', 'discovery_genre', 'discovery_favorites').
+        mode: The new mode to switch to ('standard', 'ytm_native', 'strict_thesis').
 
     Returns:
         A dictionary indicating the result of the mode change.
@@ -330,58 +330,20 @@ async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
         }
 
     mode_lower = mode.lower().strip()
-    if mode_lower not in ["standard", "discovery_genre", "discovery_favorites"]:
+    if mode_lower not in ["standard", "ytm_native", "strict_thesis"]:
         return {
             "status": "error",
-            "message": f"Invalid mode '{mode}'. Mode must be one of: 'standard', 'discovery_genre', 'discovery_favorites'.",
+            "message": f"Invalid mode '{mode}'. Mode must be one of: 'standard', 'ytm_native', 'strict_thesis'.",
         }
 
     session = tool_context.session
-    user_id = session.user_id if session else "default_user"
-
-    if mode_lower == "discovery_favorites":
-        from bot.audio import get_user_favorites
-        favs = get_user_favorites(user_id)
-        if not favs or not favs.get("liked_tracks"):
-            return {
-                "status": "error",
-                "message": (
-                    "You don't have any persistent favorites yet! "
-                    "Play some tracks and click the Heart (💖) button to add favorites before switching to discovery_favorites mode."
-                ),
-            }
-
-    # If switching to discovery_genre and we don't have seed tags yet, try to populate them from the current genre/thesis
-    if mode_lower == "discovery_genre" and not state.get("seed_tags"):
-        genre = state.get("genre", state.get("playlist_thesis", "music"))
-        # Run agentic tag expansion
-        import os
-        from google import genai
-        try:
-            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-            client = genai.Client(api_key=api_key)
-            model_id = "gemini-3.1-flash-lite"
-            prompt = f"""You are a music expert. The user wants to steer their discovery radio to: '{genre}'.
-Generate a list of exactly 3-5 relevant, specific Last.fm tags that represent this sonic direction.
-
-STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
-{{
-  "seed_tags": ["tag1", "tag2", "tag3"]
-}}"""
-            response = await client.aio.models.generate_content(model=model_id, contents=prompt)
-            from app.tools import _extract_json
-            data = _extract_json(response.text)
-            seed_tags = data.get("seed_tags", [])
-            state["seed_tags"] = seed_tags
-        except Exception as e:
-            logger.warning("Failed to expand tags during mode switch: %s", e)
-            state["seed_tags"] = [genre]
 
     # Save the new mode
     state["mode"] = mode_lower
 
-    # Clear the upcoming tracks queue so the new algorithm takes effect immediately
+    # Clear the upcoming tracks queue and candidate pool so the new algorithm takes effect immediately
     state["upcoming_tracks"] = []
+    state["candidate_pool"] = []
 
     # Import bot helpers
     from bot.audio import persist_radio_state_helper, replenish_radio_queue
@@ -554,5 +516,47 @@ async def toggle_radio_jit(enabled: bool, tool_context: ToolContext) -> dict:
     return {
         "status": "success",
         "message": f"Successfully toggled JIT generation to {mode_text}.",
+    }
+
+async def hibernate_radio(tool_context: ToolContext) -> dict:
+    """Saves the current radio station state for later and stops the broadcast.
+    Use this when the user asks to save, hibernate, or pause a station for later.
+    
+    Returns:
+        A success message indicating the station was hibernated.
+    """
+    from app.radio_state import is_station_active, resolve_guild_id, save_hibernated_radio
+
+    state = _get_radio_state(tool_context)
+    if not state or not state.get("active"):
+        return {
+            "status": "error",
+            "message": "No active radio broadcast found for this server.",
+        }
+
+    session = tool_context.session
+    session_id = session.id if session else ""
+    channel_id_str = session_id.replace("discord_", "")
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        channel_id = 9999
+    guild_id = resolve_guild_id(channel_id) or channel_id
+
+    # 1. Save it to disk
+    success = save_hibernated_radio(guild_id)
+    
+    if not success:
+        return {
+            "status": "error",
+            "message": "Failed to save the radio state to disk."
+        }
+
+    # 2. Stop the station
+    await stop_station(tool_context)
+
+    return {
+        "status": "success",
+        "message": "Successfully hibernated the radio station! It has been stopped, but you can resume it anytime.",
     }
 
