@@ -381,7 +381,14 @@ class StyleSelectionView(discord.ui.View):
                     "latest_input_image_artifact": None,
                 })
 
-                run_prompt = f"Apply this specific artistic style: '{style_str}' to the prompt: '{self.original_prompt}'."
+                import re
+                # Strip out any existing 'art by...' string to prevent conflicting styles
+                clean_prompt = re.sub(r'[\,\.\s]*art by[^\.]+?\.', '.', self.original_prompt, flags=re.IGNORECASE)
+                # Also strip if it doesn't end with a period
+                clean_prompt = re.sub(r'[\,\.\s]*art by.*$', '', clean_prompt, flags=re.IGNORECASE)
+                clean_prompt = clean_prompt.strip()
+
+                run_prompt = f"Apply this specific artistic style: '{style_str}' to the prompt: '{clean_prompt}'."
                 
                 temp_path, response_text, new_image_key = await _run_agent_and_get_image(
                     self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
