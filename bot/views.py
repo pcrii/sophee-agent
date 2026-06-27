@@ -303,6 +303,8 @@ async def _trigger_restyle_options(interaction, parent_msg_id, original_prompt, 
 
 For each, write a 1-sentence blurb describing what this visual combination looks like. Return STRICTLY a JSON array of 3 objects, each with 'style_string' (the exact string provided above) and 'blurb'. Use markdown ```json format."""
 
+        # Ensure session exists before running agent
+        await update_state_fn(user_id, session_id, {})
         response_text = await _run_agent_and_get_text(runner, user_id, session_id, prompt)
         
         # parse json
