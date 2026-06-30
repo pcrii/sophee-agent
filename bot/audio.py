@@ -726,12 +726,14 @@ async def jit_replenish_queue(state, channel=None):
 
         new_candidates = []
 
-        # Gather new candidates based on mode
-        if mode == "ytm_native":
-            # Purely driven by YouTube Music recommendations from recently played history
-            if played_tracks:
-                recent_played = played_tracks[-3:]
-                for infl in recent_played:
+        # Only gather candidates if pool is low or 33% chance to stagger API calls
+        import random
+        if len(state["candidate_pool"]) < 30 or random.random() < 0.33:
+            # Gather new candidates based on mode
+            if mode == "ytm_native":
+                # Purely driven by YouTube Music recommendations from recently played history
+                if played_tracks:
+                    infl = random.choice(played_tracks[-3:])
                     vid = infl.get("videoId")
                     if not vid:
                         yt_res = await search_ytmusic_track(f"{infl.get('artist')} {infl.get('title')}")
@@ -744,28 +746,29 @@ async def jit_replenish_queue(state, channel=None):
                         if yt_radio.get("status") == "success":
                             for track in yt_radio.get("tracks", [])[:20]:
                                 new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 15))
-            else:
-                # If nothing has played yet, seed from the thesis via YTM search
-                yt_res = await search_ytmusic_track(genre)
-                if yt_res.get("status") == "success" and yt_res.get("videoId"):
-                    yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
-                    if yt_radio.get("status") == "success":
-                        for track in yt_radio.get("tracks", [])[:20]:
-                            new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 15))
+                else:
+                    # If nothing has played yet, seed from the thesis via YTM search
+                    yt_res = await search_ytmusic_track(genre)
+                    if yt_res.get("status") == "success" and yt_res.get("videoId"):
+                        yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
+                        if yt_radio.get("status") == "success":
+                            for track in yt_radio.get("tracks", [])[:20]:
+                                new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 15))
 
-        elif mode == "strict_thesis":
-            # Completely ignores recently played history. Purely driven by the LLM seed tags.
-            tags_to_search = []
-            if seed_tags:
-                for tag_entry in seed_tags:
-                    if isinstance(tag_entry, dict):
-                        tags_to_search.append((tag_entry.get("tag", genre), float(tag_entry.get("weight", 1.0))))
-                    else:
-                        tags_to_search.append((str(tag_entry), 1.0))
-            else:
-                tags_to_search.append((genre, 1.0))
+            elif mode == "strict_thesis":
+                # Completely ignores recently played history. Purely driven by the LLM seed tags.
+                tags_to_search = []
+                if seed_tags:
+                    for tag_entry in seed_tags:
+                        if isinstance(tag_entry, dict):
+                            tags_to_search.append((tag_entry.get("tag", genre), float(tag_entry.get("weight", 1.0))))
+                        else:
+                            tags_to_search.append((str(tag_entry), 1.0))
+                else:
+                    tags_to_search.append((genre, 1.0))
 
-            for tag_name, weight in tags_to_search:
+                import random
+                tag_name, weight = random.choice(tags_to_search)
                 yt_res = await search_ytmusic_track(tag_name)
                 if yt_res.get("status") == "success" and yt_res.get("videoId"):
                     yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
@@ -773,10 +776,10 @@ async def jit_replenish_queue(state, channel=None):
                         for track in yt_radio.get("tracks", [])[:15]:
                             new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 10 * weight))
 
-        else:  # "standard" (Hybrid of history drift and thesis anchoring)
-            if played_tracks:
-                recent_played = played_tracks[-3:]
-                for infl in recent_played:
+            else:  # "standard" (Hybrid of history drift and thesis anchoring)
+                import random
+                if played_tracks:
+                    infl = random.choice(played_tracks[-3:])
                     vid = infl.get("videoId")
                     if not vid:
                         yt_res = await search_ytmusic_track(f"{infl.get('artist')} {infl.get('title')}")
@@ -790,23 +793,25 @@ async def jit_replenish_queue(state, channel=None):
                             for track in yt_radio.get("tracks", [])[:10]:
                                 new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 12))
 
-            # Mix in the thesis tags to prevent total drift
-            if seed_tags:
-                tag = seed_tags[0] if not isinstance(seed_tags[0], dict) else seed_tags[0].get("tag", genre)
-                yt_res = await search_ytmusic_track(tag)
+                # Mix in the thesis tags to prevent total drift (but not every single time)
+                if seed_tags and random.random() < 0.5:
+                    import random
+                    tag_entry = random.choice(seed_tags)
+                    tag = tag_entry if not isinstance(tag_entry, dict) else tag_entry.get("tag", genre)
+                    yt_res = await search_ytmusic_track(tag)
+                    if yt_res.get("status") == "success" and yt_res.get("videoId"):
+                        yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
+                        if yt_radio.get("status") == "success":
+                            for track in yt_radio.get("tracks", [])[:10]:
+                                new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 10))
+
+            if not new_candidates and not state["candidate_pool"]:
+                yt_res = await search_ytmusic_track("popular hits")
                 if yt_res.get("status") == "success" and yt_res.get("videoId"):
                     yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
                     if yt_radio.get("status") == "success":
                         for track in yt_radio.get("tracks", [])[:10]:
-                            new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 10))
-
-        if not new_candidates and not state["candidate_pool"]:
-            yt_res = await search_ytmusic_track("popular hits")
-            if yt_res.get("status") == "success" and yt_res.get("videoId"):
-                yt_radio = await generate_ytmusic_radio(yt_res["videoId"])
-                if yt_radio.get("status") == "success":
-                    for track in yt_radio.get("tracks", [])[:10]:
-                        new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 2))
+                            new_candidates.append(({"artist": track["artists"][0] if track["artists"] else "Unknown", "title": track["title"], "videoId": track["videoId"]}, 2))
 
         # Add new candidates to the pool
         for track, base_score in new_candidates:
