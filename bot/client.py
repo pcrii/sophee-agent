@@ -547,6 +547,7 @@ async def execute_agent_turn(
             "playlist_thesis": session.state.get("staged_station_thesis", "music"),
             "mode": session.state.get("staged_station_mode", "standard"),
             "seed_tags": session.state.get("staged_station_seed_tags", []),
+            "candidate_pool_seeds": session.state.get("staged_station_candidate_pool_seeds", []),
         }
 
         # Clear the staged data and persist it so it's only shown once
@@ -554,6 +555,7 @@ async def execute_agent_turn(
         session.state["staged_station_thesis"] = None
         session.state["staged_station_mode"] = None
         session.state["staged_station_seed_tags"] = None
+        session.state["staged_station_candidate_pool_seeds"] = None
 
         from google.adk.events import Event, EventActions
         import time
@@ -568,6 +570,7 @@ async def execute_agent_turn(
                     "staged_station_thesis": None,
                     "staged_station_mode": None,
                     "staged_station_seed_tags": None,
+                    "staged_station_candidate_pool_seeds": None,
                 }
             ),
         )

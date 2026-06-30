@@ -755,7 +755,7 @@ async def get_trending_artists(country: str = "", tool_context: ToolContext = No
 # Station Management
 # ---------------------------------------------------------------------------
 
-async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, mode: str = "standard", resume_hibernated: bool = False) -> dict:
+async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, mode: str = "standard", resume_hibernated: bool = False, explicit_tracks: list = None) -> dict:
     """Curates a new radio station playlist and stages it for launch, OR resumes a hibernated station.
     ONLY call this when NO station is currently running. If a station is already
     active, the model should use `steer_radio` to change direction instead.
@@ -769,6 +769,7 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
                          (e.g., 'synthwave', 'rainy day cafe'). Ignore this if resume_hibernated is True.
         mode: The station mode ('standard', 'ytm_native', 'strict_thesis').
         resume_hibernated: If True, attempts to load and resume the user's previously hibernated radio session instead of creating a new one.
+        explicit_tracks: Optional list of specific tracks (e.g. from load_ytmusic_playlist) to bypass LLM track hallucination.
 
     Returns:
         A dictionary containing the curated tracklist (or the resumed state), or an error if a station is already active.
@@ -822,8 +823,30 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
     client = genai.Client(api_key=api_key)
     model_id = "gemini-3.1-flash-lite"
 
+    candidate_pool_seeds = []
+
     # Seeding based on mode
-    if mode == "discovery_favorites":
+    if explicit_tracks:
+        import random
+        random.shuffle(explicit_tracks)
+        selected = explicit_tracks[:4]
+        candidate_pool_seeds = explicit_tracks[4:]
+        selected_str = "\n".join([f"- {t.get('artist', '')} - {t.get('title', '')}" for t in selected])
+        prompt = f"""You are a music nerd acting as an internet radio DJ.
+TASK:
+1. The user has provided an explicit playlist. Here are 4 random songs from it:
+{selected_str}
+2. You do NOT need to select any tracks. Just generate a list of exactly 3-5 relevant, specific Last.fm genre/style tags that describe the sonic vibe of these 4 tracks, along with a weight (a float between 0.1 and 1.0) indicating how strongly it should influence the station's future algorithmic recommendations. The most central tag should have a weight of 1.0.
+
+STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
+{{
+  "seed_tags": [
+    {{"tag": "tag1", "weight": 1.0}},
+    {{"tag": "tag2", "weight": 0.7}}
+  ],
+  "selected_tracks": []
+}}"""
+    elif mode == "discovery_favorites":
         favs = get_user_favorites(user_id)
         liked_tracks = favs.get("liked_tracks", [])
         if not liked_tracks:
@@ -886,42 +909,45 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 
         data = _extract_json(text)
 
-        all_valid_tracks = []
-        retries = 0
-        current_tracks = data.get("selected_tracks", [])
+        if explicit_tracks:
+            final_tracks = selected
+        else:
+            all_valid_tracks = []
+            retries = 0
+            current_tracks = data.get("selected_tracks", [])
 
-        # Filter out duplicates from the initial model response
-        unique_initial = []
-        for track in current_tracks:
-            if not is_duplicate(track, unique_initial):
-                unique_initial.append(track)
-        current_tracks = unique_initial
+            # Filter out duplicates from the initial model response
+            unique_initial = []
+            for track in current_tracks:
+                if not is_duplicate(track, unique_initial):
+                    unique_initial.append(track)
+            current_tracks = unique_initial
 
-        while retries < 3:
-            valid, invalid = await validate_tracklist_via_lastfm(current_tracks)
+            while retries < 3:
+                valid, invalid = await validate_tracklist_via_lastfm(current_tracks)
 
-            for track in valid:
-                if not is_duplicate(track, all_valid_tracks):
-                    all_valid_tracks.append(track)
+                for track in valid:
+                    if not is_duplicate(track, all_valid_tracks):
+                        all_valid_tracks.append(track)
 
-            if len(all_valid_tracks) >= 4:
-                break
+                if len(all_valid_tracks) >= 4:
+                    break
 
-            needed = 4 - len(all_valid_tracks)
-            retries += 1
-            logger.info(
-                "Station curation: %d valid, need %d more (retry %d/3)",
-                len(all_valid_tracks), needed, retries,
-            )
+                needed = 4 - len(all_valid_tracks)
+                retries += 1
+                logger.info(
+                    "Station curation: %d valid, need %d more (retry %d/3)",
+                    len(all_valid_tracks), needed, retries,
+                )
 
-            already_chosen_str = "\n".join(
-                [f"- {t.get('artist')} - {t.get('title')}" for t in all_valid_tracks]
-            )
-            invalid_list_str = "\n".join(
-                [f"- {t.get('artist')} - {t.get('title')}" for t in invalid]
-            )
+                already_chosen_str = "\n".join(
+                    [f"- {t.get('artist')} - {t.get('title')}" for t in all_valid_tracks]
+                )
+                invalid_list_str = "\n".join(
+                    [f"- {t.get('artist')} - {t.get('title')}" for t in invalid]
+                )
 
-            retry_prompt = f"""We currently have the following {len(all_valid_tracks)} validated unique tracks:
+                retry_prompt = f"""We currently have the following {len(all_valid_tracks)} validated unique tracks:
 {already_chosen_str}
 
 The following generated tracks were rejected (not found on Last.FM or are not actual songs):
@@ -935,31 +961,33 @@ CRITICAL RULES:
 
 Use the same JSON array format."""
 
-            contents.append(types.Content(role="user", parts=[types.Part.from_text(text=retry_prompt)]))
-            response = await client.aio.models.generate_content(
-                model=model_id,
-                contents=contents,
-            )
-            text = response.text
-            contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=retry_prompt)]))
+                response = await client.aio.models.generate_content(
+                    model=model_id,
+                    contents=contents,
+                )
+                text = response.text
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
 
-            new_data = _extract_json(text)
-            current_tracks = new_data.get("selected_tracks", [])
+                new_data = _extract_json(text)
+                current_tracks = new_data.get("selected_tracks", [])
 
-            # Filter out duplicates from the newly generated tracks
-            unique_new = []
-            for track in current_tracks:
-                if not is_duplicate(track, unique_new) and not is_duplicate(track, all_valid_tracks):
-                    unique_new.append(track)
-            current_tracks = unique_new
+                # Filter out duplicates from the newly generated tracks
+                unique_new = []
+                for track in current_tracks:
+                    if not is_duplicate(track, unique_new) and not is_duplicate(track, all_valid_tracks):
+                        unique_new.append(track)
+                current_tracks = unique_new
 
-        final_tracks = all_valid_tracks[:4]
+            final_tracks = all_valid_tracks[:4]
 
         # Stage in session state for the Discord embed to pick up (flat keys)
         tool_context.state["staged_station_tracks"] = final_tracks
         tool_context.state["staged_station_thesis"] = playlist_thesis
         tool_context.state["staged_station_mode"] = mode
         tool_context.state["staged_station_seed_tags"] = data.get("seed_tags", [])
+        if candidate_pool_seeds:
+            tool_context.state["staged_station_candidate_pool_seeds"] = candidate_pool_seeds
 
         return {
             "status": "success",
