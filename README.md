@@ -9,8 +9,8 @@ No slash commands. Just @ mention her and talk.
 ## Features
 
 ### 🎙️ Internet Radio DJ
-- **Playlist Generation** — describe a vibe, genre, or theme and Sophee curates a validated 4-track starting sequence using agentic weighted tag expansion + Last.fm validation
-- **Live Voice Playback** — connects to Discord voice channels, downloads songs via yt-dlp, and streams audio with volume control
+- **Playlist Generation** — describe a vibe, genre, or theme and Sophee curates a starting sequence using LLM curation backed by instantaneous YouTube Music metadata validation.
+- **Live Voice Playback** — connects to Discord voice channels, resolves exact YouTube Music video IDs instantly via `ytmusicapi` (bypassing slow searches), and streams audio seamlessly via `yt-dlp`.
 - **Track Feedback & Scoring** — thumbs up/down (👍/👎) for session-based JIT steering, and persistent Heart (💖) button to save favorites globally
 - **Auto-Replenishment (Rolling Candidate Pool)** — queue dynamically JIT-refills using a persistent candidate pool. It fetches recommendations from YouTube Music and Last.fm based on your recent listening history, merging old and new tracks, and applying an Age-Decay penalty so stale candidates naturally drop off.
 - **Discovery Modes** — supports Standard, Genre Discovery (using seed tags and favorites negatively to block duplicates), and Favorites Discovery (seeds from your persistent favorites profile)
@@ -25,7 +25,7 @@ No slash commands. Just @ mention her and talk.
 ### 🎨 Art Director
 - **Image Generation** — generates images via Google's Imagen through the Gemini API
 - **Style Rolling** — randomly selects artists from a curated catalog across three dimensions (medium/line, lighting/atmosphere, genre/subject) and blends them into prompts
-- **Image Editing** — edit, reroll (same prompt new seed), and restyle (same prompt new artist style) via Discord button UI
+- **Image Editing** — gracefully handles natural language follow-ups. Just reply to an image with instructions (e.g. "make it darker", "change the background to red") and Sophee will iteratively edit the image using conversational context.
 - **Art Scholar Mode** — ask for style inspiration and Sophee introduces the rolled artists with biographical context, researching unfamiliar artists via Google Search
 - **Metadata Tracking** — image prompts, styles, and resolutions are cached per-message for accurate edit/reroll chains
 
@@ -116,7 +116,7 @@ The root agent never responds directly — it immediately transfers to the most 
 ### Hardcoded Pipelines (reliable, deterministic)
 | Function | Purpose |
 |---|---|
-| `generate_radio_playlist` | Full pipeline: LLM curation → Last.fm validation → state registration |
+| `start_radio_station` | Full pipeline: LLM curation → YTM validation → state registration |
 | `steer_radio` | Clears queue, refills from tag/similar/new releases |
 | `fetch_new_music_releases` | MusicBrainz → Last.fm track lookup (Gemini fallback) |
 
