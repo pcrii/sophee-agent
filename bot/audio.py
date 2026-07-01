@@ -307,8 +307,22 @@ async def download_song_async(query):
         return score
 
     def extract():
+        nonlocal query
         is_direct_url = query.startswith("http://") or query.startswith("https://")
         
+        if not is_direct_url:
+            try:
+                from ytmusicapi import YTMusic
+                ytmusic = YTMusic()
+                search_results = ytmusic.search(query, filter="songs", limit=1)
+                if search_results and search_results[0].get("videoId"):
+                    vid = search_results[0]["videoId"]
+                    logger.info("ytmusicapi successfully resolved text query '%s' to videoId: %s", query, vid)
+                    query = f"https://music.youtube.com/watch?v={vid}"
+                    is_direct_url = True
+            except Exception as e:
+                logger.warning("ytmusicapi failed to resolve query '%s', falling back to ytsearch. Error: %s", query, e)
+
         if is_direct_url:
             candidates_report = []
             final_path = None
