@@ -26,8 +26,6 @@ from google.genai import types
 
 from app.tools import (
     fetch_google_news,
-    change_radio_mode,
-    start_radio_station,
     stop_radio_station,
     generate_image,
     start_radio_station,
@@ -174,7 +172,6 @@ dj_agent = Agent(
         shuffle_queue,
         steer_radio,
         change_radio_mode,
-        start_radio_station,
         stop_radio_station,
         mutate_upcoming_queue,
         stop_station,
