@@ -159,109 +159,7 @@ async def _send_image_with_thread(
 # Image Edit Modal
 # ---------------------------------------------------------------------------
 
-class ImageEditModal(discord.ui.Modal, title="Edit Image"):
-    prompt_input = discord.ui.TextInput(
-        label="New Prompt / Edit Instructions",
-        style=discord.TextStyle.paragraph,
-        placeholder="e.g., make it darker, add a hat...",
-        required=True,
-    )
 
-    def __init__(self, user_id, session_id, runner, artifact_service, session_service, update_state_fn):
-        super().__init__()
-        self.user_id = user_id
-        self.session_id = session_id
-        self.runner = runner
-        self.artifact_service = artifact_service
-        self.session_service = session_service
-        self.update_state_fn = update_state_fn
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)
-        try:
-            parent_msg_id = str(interaction.message.id) if interaction.message else None
-            ref_meta = await get_image_metadata(parent_msg_id)
-            original_prompt = ""
-            state_updates = {
-                "latest_input_image": None,  # Clear by default
-                "latest_input_image_artifact": None,
-            }
-            active_session_id = self.session_id
-            if ref_meta:
-                original_prompt = ref_meta.get("prompt", "")
-                if ref_meta.get("session_id"):
-                    active_session_id = ref_meta.get("session_id")
-                    logger.info("Routing edit modal submission to isolated session: %s", active_session_id)
-                state_updates.update({
-                    "rolled_style": ref_meta.get("style"),
-                    "latest_resolution": ref_meta.get("resolution"),
-                })
-                
-                image_artifact = ref_meta.get("image_artifact")
-                if image_artifact:
-                    parent_artifact = ref_meta.get("parent_image_artifact")
-                    # If edit prompt requests original composition, load parent artifact
-                    prompt_lower = self.prompt_input.value.lower()
-                    if parent_artifact and any(kw in prompt_lower for kw in ["original", "source", "first", "initial", "seed"]):
-                        logger.info("User requested original composition in edit modal. Routing to parent artifact: %s", parent_artifact)
-                        image_artifact = parent_artifact
-                    try:
-                        part = await self.artifact_service.load_artifact(
-                            app_name="app",
-                            user_id=self.user_id,
-                            filename=image_artifact,
-                            session_id=active_session_id,
-                        )
-                        if part and part.inline_data and part.inline_data.data:
-                            img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                            state_updates["latest_input_image"] = {
-                                "data": img_b64,
-                                "mime_type": part.inline_data.mime_type or "image/jpeg",
-                                "original_prompt": original_prompt or "Generate an image",
-                            }
-                            state_updates["latest_input_image_artifact"] = image_artifact
-                            logger.info("Loaded reference image for edit from artifact: %s", image_artifact)
-                    except Exception as e:
-                        logger.error("Failed to load reference image artifact %s for edit: %s", image_artifact, e)
-
-            await self.update_state_fn(self.user_id, active_session_id, state_updates)
-
-            edit_prompt = f"Image edit request: {self.prompt_input.value}"
-
-            temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                self.runner, self.artifact_service, self.user_id, active_session_id, edit_prompt
-            )
-
-            if temp_path:
-                view = ImageView(
-                    self.user_id, active_session_id,
-                    self.runner, self.artifact_service, self.session_service, self.update_state_fn,
-                )
-                session = await self.session_service.get_session(
-                    app_name="app", user_id=self.user_id, session_id=active_session_id
-                )
-                new_prompt = f"{original_prompt} -> edited to: {self.prompt_input.value}" if original_prompt else self.prompt_input.value
-
-                thread_content = f"Edited based on: **{self.prompt_input.value}**\n\n{response_text}" if response_text else f"Edited based on: **{self.prompt_input.value}**"
-                sent_msg = await _send_image_with_thread(
-                    interaction, temp_path, thread_content, view,
-                )
-
-                last_prompt = session.state.get("last_generated_prompt") if session else None
-                await save_image_metadata(
-                    message_id=str(sent_msg.id),
-                    prompt=last_prompt or new_prompt,
-                    style=session.state.get("rolled_style") if session else None,
-                    resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
-                    image_artifact=new_image_key,
-                    parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
-                    session_id=active_session_id,
-                )
-            else:
-                await interaction.followup.send(response_text or "Failed to generate edited image.")
-        except Exception as e:
-            logger.error("Image editing error: %s", e)
-            await interaction.followup.send(f"Error editing image: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -476,14 +374,6 @@ class ImageView(discord.ui.View):
         self.artifact_service = artifact_service
         self.session_service = session_service
         self.update_state_fn = update_state_fn
-
-    @discord.ui.button(label="Edit Image", style=discord.ButtonStyle.primary, emoji="\u270f\ufe0f")
-    async def edit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = ImageEditModal(
-            self.user_id, self.session_id,
-            self.runner, self.artifact_service, self.session_service, self.update_state_fn,
-        )
-        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Reroll", style=discord.ButtonStyle.secondary, emoji="\U0001f501")
     async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
