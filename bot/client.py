@@ -589,6 +589,33 @@ async def execute_agent_turn(
         await channel.send(embed=embed, view=view)
         return
 
+    # Handle staged station stop (boot bot from voice channel)
+    if session and session.state.get("staged_station_stop"):
+        session.state["staged_station_stop"] = False
+        from google.adk.events import Event, EventActions
+        import time
+        import uuid
+        dummy_event = Event(
+            timestamp=time.time(),
+            author="system",
+            invocation_id=f"state_update_{uuid.uuid4().hex[:8]}",
+            actions=EventActions(state_delta={"staged_station_stop": False}),
+        )
+        await session_service.append_event(session, dummy_event)
+
+        if hasattr(channel, "guild") and channel.guild and channel.guild.voice_client:
+            try:
+                await channel.guild.voice_client.disconnect(force=True)
+            except Exception as e:
+                logger.warning("Failed to disconnect voice client on staged_station_stop: %s", e)
+
+        if response_text:
+            if message_reference:
+                await send_message_in_chunks(message_reference, response_text)
+            else:
+                await send_message_in_chunks(channel, response_text)
+        return
+
     # Build adventure HUD / choices if active
     if session and session.state.get("adventure_active"):
         embed = discord.Embed(

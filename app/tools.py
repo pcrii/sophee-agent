@@ -999,6 +999,11 @@ Use the same JSON array format."""
         logger.error("Error curating station: %s", e)
         return {"status": "error", "message": f"Error curating station: {e}"}
 
+async def stop_radio_station(tool_context: ToolContext) -> dict:
+    """Stops the currently playing radio station, clears its playback state, and forcibly disconnects Sophee from the voice channel."""
+    tool_context.state["staged_station_stop"] = True
+    return {"status": "success", "message": "Command issued to stop the radio and disconnect from the voice channel."}
+
 
 # ---------------------------------------------------------------------------
 # TTS Generation
