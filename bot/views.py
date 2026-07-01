@@ -627,7 +627,7 @@ class RadioView(discord.ui.View):
             "voice_channel_id": voice_channel.id,
             "text_channel_id": channel_id,
             "use_dj": use_dj,
-            "candidate_pool": [{"track": t, "base_score": 50, "age": 0} for t in self.playlist_data.get("candidate_pool_seeds", [])],
+            "candidate_pool": [{"track": t, "base_score": 50, "age": 0} for t in (self.playlist_data.get("candidate_pool_seeds") or [])],
         }
         set_radio_state(guild_id, state_dict)
 
