@@ -45,6 +45,7 @@ from app.radio_tools import (
     change_radio_mode,
     mutate_upcoming_queue,
     remove_from_queue,
+    resume_radio,
     show_station_queue,
     shuffle_queue,
     steer_radio,
@@ -176,6 +177,7 @@ dj_agent = Agent(
         mutate_upcoming_queue,
         stop_station,
         hibernate_radio,
+        resume_radio,
         toggle_radio_jit,
         # Last.fm primitives — agent can freestyle with these
         search_lastfm,

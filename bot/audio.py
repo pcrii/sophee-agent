@@ -988,17 +988,15 @@ async def build_radio_sequence(
             await jit_replenish_queue(state, channel=disc_channel)
             await persist_radio_state_helper(guild_id, session_service, channel_id, state)
 
-            while queue.qsize() >= 2:
-                if abort_event.is_set() or not state["active"]:
-                    return
-                await asyncio.sleep(1)
-
             if not state["upcoming_tracks"]:
                 await asyncio.sleep(2)
                 continue
 
             track = state["upcoming_tracks"].pop(0)
             state["played_tracks"].append(track)
+            # Cap played history to prevent unbounded memory growth on long sessions
+            if len(state["played_tracks"]) > 50:
+                state["played_tracks"] = state["played_tracks"][-50:]
 
             t_curr = f"{track.get('artist')} - {track.get('title')}"
             state["current_track"] = t_curr

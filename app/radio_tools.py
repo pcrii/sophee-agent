@@ -38,6 +38,18 @@ def _get_radio_state(tool_context: ToolContext) -> dict | None:
     return active_radios.get(guild_id)
 
 
+def _resolve_guild(tool_context: ToolContext) -> int:
+    """Resolves the guild ID for the current session. Returns 9999 as a test fallback."""
+    session = tool_context.session
+    session_id = session.id if session else ""
+    channel_id_str = session_id.replace("discord_", "")
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        channel_id = 9999
+    return resolve_guild_id(channel_id) or channel_id
+
+
 async def stop_station(tool_context: ToolContext) -> dict:
     """Stops the currently running radio station and clears its state.
     Use this when the user asks to stop the radio, kill the station, or shut it down.
@@ -55,15 +67,8 @@ async def stop_station(tool_context: ToolContext) -> dict:
     state["active"] = False
     state["upcoming_tracks"] = []
 
-    # Try to get guild_id to clean up now_playing_cache
-    session = tool_context.session
-    session_id = session.id if session else ""
-    channel_id_str = session_id.replace("discord_", "")
-    try:
-        channel_id = int(channel_id_str)
-    except ValueError:
-        channel_id = 0
-    guild_id = resolve_guild_id(channel_id) or channel_id
+    # Clean up now_playing_cache
+    guild_id = _resolve_guild(tool_context)
     now_playing_cache.pop(guild_id, None)
 
     return {
@@ -92,14 +97,7 @@ async def show_station_queue(tool_context: ToolContext) -> dict:
 
     # Use now_playing_cache for what's ACTUALLY playing in voice,
     # not state["current_track"] which is set when queued (ahead of playback).
-    session = tool_context.session
-    session_id = session.id if session else ""
-    channel_id_str = session_id.replace("discord_", "")
-    try:
-        channel_id = int(channel_id_str)
-    except ValueError:
-        channel_id = 9999
-    guild_id = resolve_guild_id(channel_id) or channel_id
+    guild_id = _resolve_guild(tool_context)
     actually_playing = now_playing_cache.get(guild_id, state.get("current_track"))
 
     return {
@@ -336,8 +334,6 @@ async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
             "message": f"Invalid mode '{mode}'. Mode must be one of: 'standard', 'ytm_native', 'strict_thesis'.",
         }
 
-    session = tool_context.session
-
     # Save the new mode
     state["mode"] = mode_lower
 
@@ -347,14 +343,6 @@ async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
 
     # Import bot helpers
     from bot.audio import persist_radio_state_helper, replenish_radio_queue
-    
-    # Try to resolve channel_id
-    session_id = session.id if session else ""
-    channel_id_str = session_id.replace("discord_", "")
-    try:
-        channel_id = int(channel_id_str)
-    except ValueError:
-        channel_id = 9999
 
     # Run replenish_radio_queue to immediately fill the queue with 3 tracks matching the new algorithm
     try:
@@ -365,9 +353,14 @@ async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
     # Persist state
     from bot.client import session_service
     import asyncio
-    from app.radio_state import resolve_guild_id
-    guild_id = resolve_guild_id(channel_id) or channel_id
-    
+    guild_id = _resolve_guild(tool_context)
+    session_id = (tool_context.session.id if tool_context.session else "") 
+    channel_id_str = session_id.replace("discord_", "")
+    try:
+        channel_id = int(channel_id_str)
+    except ValueError:
+        channel_id = 9999
+
     asyncio.create_task(
         persist_radio_state_helper(guild_id, session_service, channel_id, state)
     )
@@ -497,16 +490,14 @@ async def toggle_radio_jit(enabled: bool, tool_context: ToolContext) -> dict:
     from bot.audio import persist_radio_state_helper
     from bot.client import session_service
     import asyncio
-    from app.radio_state import resolve_guild_id
 
-    session = tool_context.session
-    session_id = session.id if session else ""
+    guild_id = _resolve_guild(tool_context)
+    session_id = (tool_context.session.id if tool_context.session else "")
     channel_id_str = session_id.replace("discord_", "")
     try:
         channel_id = int(channel_id_str)
     except ValueError:
         channel_id = 9999
-    guild_id = resolve_guild_id(channel_id) or channel_id
 
     asyncio.create_task(
         persist_radio_state_helper(guild_id, session_service, channel_id, state)
@@ -525,7 +516,7 @@ async def hibernate_radio(tool_context: ToolContext) -> dict:
     Returns:
         A success message indicating the station was hibernated.
     """
-    from app.radio_state import is_station_active, resolve_guild_id, save_hibernated_radio
+    from app.radio_state import save_hibernated_radio
 
     state = _get_radio_state(tool_context)
     if not state or not state.get("active"):
@@ -534,14 +525,7 @@ async def hibernate_radio(tool_context: ToolContext) -> dict:
             "message": "No active radio broadcast found for this server.",
         }
 
-    session = tool_context.session
-    session_id = session.id if session else ""
-    channel_id_str = session_id.replace("discord_", "")
-    try:
-        channel_id = int(channel_id_str)
-    except ValueError:
-        channel_id = 9999
-    guild_id = resolve_guild_id(channel_id) or channel_id
+    guild_id = _resolve_guild(tool_context)
 
     # 1. Save it to disk
     success = save_hibernated_radio(guild_id)
@@ -558,5 +542,96 @@ async def hibernate_radio(tool_context: ToolContext) -> dict:
     return {
         "status": "success",
         "message": "Successfully hibernated the radio station! It has been stopped, but you can resume it anytime.",
+    }
+
+
+async def resume_radio(tool_context: ToolContext) -> dict:
+    """Resumes a previously hibernated radio station. Reconnects to the saved voice channel
+    and restarts the broadcast from where it left off, using JIT to replenish the queue.
+    Use this when the user asks to resume, restore, wake up, or continue a hibernated station.
+
+    Returns:
+        A success message if the station was resumed, or an error if no hibernated state exists.
+    """
+    import asyncio
+    from app.radio_state import load_hibernated_radio, set_radio_state, get_discord_client
+    from bot.audio import audio_player_task, build_radio_sequence, persist_radio_state_helper
+    from bot.client import session_service
+
+    guild_id = _resolve_guild(tool_context)
+
+    # Check nothing is already running
+    from app.radio_state import is_station_active
+    if is_station_active(guild_id):
+        return {
+            "status": "error",
+            "message": "A radio station is already running. Stop it first before resuming a hibernated one.",
+        }
+
+    state = load_hibernated_radio(guild_id)
+    if not state:
+        return {
+            "status": "error",
+            "message": "No hibernated radio station found for this server.",
+        }
+
+    # Restore active flag
+    state["active"] = True
+    # Clear candidate pool so JIT starts fresh rather than replaying stale candidates
+    state["candidate_pool"] = []
+    set_radio_state(guild_id, state)
+
+    # Reconnect to voice
+    client = get_discord_client()
+    if not client:
+        return {"status": "error", "message": "Discord client not available."}
+
+    voice_channel_id = state.get("voice_channel_id")
+    text_channel_id = state.get("text_channel_id")
+    if not voice_channel_id or not text_channel_id:
+        return {"status": "error", "message": "Hibernated state is missing channel IDs."}
+
+    voice_channel = client.get_channel(voice_channel_id)
+    text_channel = client.get_channel(text_channel_id)
+    if not voice_channel or not text_channel:
+        return {"status": "error", "message": "Could not find the original voice or text channel."}
+
+    guild = voice_channel.guild
+    vc = guild.voice_client
+    try:
+        if vc and vc.is_connected():
+            await vc.move_to(voice_channel)
+        else:
+            vc = await voice_channel.connect()
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to connect to voice channel: {e}"}
+
+    # Persist restored state to DB
+    asyncio.create_task(
+        persist_radio_state_helper(guild_id, session_service, text_channel_id, state)
+    )
+
+    use_dj = state.get("use_dj", True)
+    abort_event = asyncio.Event()
+    audio_queue = asyncio.Queue(maxsize=3)
+
+    task1 = asyncio.create_task(
+        audio_player_task(vc, audio_queue, text_channel, abort_event)
+    )
+    task2 = asyncio.create_task(
+        build_radio_sequence(
+            audio_queue, use_dj, guild_id,
+            session_service, None,
+            text_channel_id, abort_event,
+        )
+    )
+    for task in (task1, task2):
+        task.add_done_callback(lambda t: None)
+
+    thesis = state.get("playlist_thesis", "your previous session")
+    mode_text = "with DJ commentary" if use_dj else "in pure music mode"
+    return {
+        "status": "success",
+        "message": f"Resuming **{thesis}** station {mode_text}. JIT will replenish the queue momentarily.",
     }
 

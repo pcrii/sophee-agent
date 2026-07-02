@@ -638,7 +638,7 @@ class RadioView(discord.ui.View):
         )
 
 
-        audio_queue = asyncio.Queue()
+        audio_queue = asyncio.Queue(maxsize=3)
         task1 = asyncio.create_task(
             audio_player_task(vc, audio_queue, voice_channel, self.abort_event)
         )
@@ -680,6 +680,45 @@ class SkipView(discord.ui.View):
             await interaction.followup.send(message, ephemeral=True)
         except (discord.NotFound, discord.HTTPException) as e:
             logger.warning("Could not send control reply: %s", e)
+
+    @discord.ui.button(label="Like", style=discord.ButtonStyle.success, emoji="👍")
+    async def like_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        acknowledged = await self._ack(interaction)
+        if not acknowledged:
+            return
+
+        guild_id = interaction.guild.id
+        from app.radio_state import active_radios, now_playing_cache
+        state = active_radios.get(guild_id)
+        if not state or not state.get("active"):
+            await self._reply(interaction, "No active radio station.")
+            return
+
+        current = now_playing_cache.get(guild_id, state.get("current_track"))
+        if not current:
+            await self._reply(interaction, "No song currently playing.")
+            return
+
+        # Scrobble to YTM history only — deliberately does NOT affect JIT scoring
+        async def _scrobble_like(song_label: str, guild_id: int):
+            try:
+                from app.ytmusic_tools import search_ytmusic_track
+                from app.auth import get_ytm_client
+                import asyncio as _asyncio
+                host_id = state.get("user_id")
+                user_yt = get_ytm_client(host_id)
+                if user_yt:
+                    track = await search_ytmusic_track(song_label)
+                    if track and track.get("videoId"):
+                        song_data = await _asyncio.to_thread(user_yt.get_song, track["videoId"])
+                        await _asyncio.to_thread(user_yt.add_history_item, song_data)
+                        logger.info("Like-scrobbled '%s' to YTM history for host %s", song_label, host_id)
+            except Exception as e:
+                logger.warning("Failed to like-scrobble %s: %s", song_label, e)
+
+        import asyncio
+        asyncio.create_task(_scrobble_like(current, guild_id))
+        await self._reply(interaction, f"👍 Liked '{current}' — scrobbled to your YTM history!")
 
     @discord.ui.button(label="Dislike / Skip", style=discord.ButtonStyle.danger, emoji="👎")
     async def dislike_button(self, interaction: discord.Interaction, button: discord.ui.Button):
