@@ -961,11 +961,16 @@ def _render_queue_card(state: dict) -> str:
     entries = state.get("display_queue") or state.get("upcoming_tracks", [])
     if not entries:
         return "🎵 **Upcoming Queue** — empty"
+    visible = entries[:5]
+    overflow = len(entries) - len(visible)
     lines = [
         f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"
-        for i, t in enumerate(entries)
+        for i, t in enumerate(visible)
     ]
+    if overflow > 0:
+        lines.append(f"*...and {overflow} more*")
     return "🎵 **Upcoming Queue**\n" + "\n".join(lines)
+
 
 
 async def _update_queue_card(state: dict, channel) -> None:
