@@ -597,6 +597,9 @@ async def audio_player_task(vc, queue, channel, abort_event):
                         state = active_radios.get(channel.guild.id)
                         if state:
                             state["now_playing_message_id"] = sent_msg.id
+                            # Pop from display_queue now that this song is actually playing
+                            if state.get("display_queue"):
+                                state["display_queue"].pop(0)
                             # Update the live queue card now that a new song is actually playing
                             asyncio.create_task(_update_queue_card(state, channel))
 
@@ -953,19 +956,33 @@ async def jit_replenish_queue(state, channel=None):
             await _update_queue_card(state, channel)
 
 
-def _render_queue_card(upcoming_tracks: list) -> str:
-    """Renders the live queue card text from the current upcoming_tracks list."""
-    if not upcoming_tracks:
+def _render_queue_card(state: dict) -> str:
+    """Renders the live queue card from display_queue (songs downloaded and waiting to play)."""
+    entries = state.get("display_queue") or state.get("upcoming_tracks", [])
+    if not entries:
         return "🎵 **Upcoming Queue** — empty"
-    lines = [f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"
-             for i, t in enumerate(upcoming_tracks)]
+    lines = [
+        f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"
+        for i, t in enumerate(entries)
+    ]
     return "🎵 **Upcoming Queue**\n" + "\n".join(lines)
 
 
 async def _update_queue_card(state: dict, channel) -> None:
     """Edits the live queue card in-place. Posts a new one if the old was deleted or missing."""
-    content = _render_queue_card(state.get("upcoming_tracks", []))
+    content = _render_queue_card(state)
+    entries = state.get("display_queue") or state.get("upcoming_tracks", [])
     msg_id = state.get("queue_display_message_id")
+    # Delete card if queue is empty
+    if not entries:
+        if msg_id:
+            try:
+                msg = await channel.fetch_message(msg_id)
+                await msg.delete()
+            except Exception:
+                pass
+            state.pop("queue_display_message_id", None)
+        return
     if msg_id:
         try:
             msg = await channel.fetch_message(msg_id)
@@ -1140,6 +1157,10 @@ async def build_radio_sequence(
             query = f"https://music.youtube.com/watch?v={vid}" if vid else t_curr
             s_file, report = await download_song_async(query)
             if s_file:
+                # Register in display_queue before putting in the playback buffer
+                state.setdefault("display_queue", []).append(
+                    {"artist": track.get("artist", ""), "title": track.get("title", "")}
+                )
                 await queue.put((s_file, t_curr, report))
         except Exception as loop_err:
             logger.exception("Error in build_radio_sequence loop: %s", loop_err)
