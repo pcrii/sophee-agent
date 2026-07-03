@@ -577,8 +577,13 @@ async def resume_radio(tool_context: ToolContext) -> dict:
 
     # Restore active flag
     state["active"] = True
-    # Clear candidate pool so JIT starts fresh rather than replaying stale candidates
+    # Clear runtime queues — stale upcoming_tracks from old sessions can flood the
+    # download queue and the queue card. JIT will refill from seed_tags immediately.
     state["candidate_pool"] = []
+    state["upcoming_tracks"] = []
+    state["display_queue"] = []
+    state.pop("now_playing_message_id", None)
+    state.pop("queue_display_message_id", None)
     set_radio_state(guild_id, state)
 
     # Reconnect to voice
