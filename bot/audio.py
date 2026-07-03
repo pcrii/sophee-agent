@@ -948,13 +948,35 @@ async def jit_replenish_queue(state, channel=None):
     if added_tracks:
         logger.info("Replenished queue JIT with %d tracks. Candidate pool size: %d", len(added_tracks), len(state["candidate_pool"]))
         if channel:
-            try:
-                tracks_list_str = "\n".join([f"- **{t.get('artist')}** - *{t.get('title')}*" for t in added_tracks])
-                await channel.send(
-                    f"\U0001f504 **Queue Replenished (JIT)** with new tracks:\n{tracks_list_str}"
-                )
-            except Exception as e:
-                logger.warning("Failed to send queue replenishment notification: %s", e)
+            await _update_queue_card(state, channel)
+
+
+def _render_queue_card(upcoming_tracks: list) -> str:
+    """Renders the live queue card text from the current upcoming_tracks list."""
+    if not upcoming_tracks:
+        return "🎵 **Upcoming Queue** — empty"
+    lines = [f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"
+             for i, t in enumerate(upcoming_tracks)]
+    return "🎵 **Upcoming Queue**\n" + "\n".join(lines)
+
+
+async def _update_queue_card(state: dict, channel) -> None:
+    """Edits the live queue card in-place. Posts a new one if the old was deleted or missing."""
+    content = _render_queue_card(state.get("upcoming_tracks", []))
+    msg_id = state.get("queue_display_message_id")
+    if msg_id:
+        try:
+            msg = await channel.fetch_message(msg_id)
+            await msg.edit(content=content)
+            return
+        except Exception:
+            state.pop("queue_display_message_id", None)
+    # No live card — send a new one
+    try:
+        sent = await channel.send(content)
+        state["queue_display_message_id"] = sent.id
+    except Exception as e:
+        logger.warning("Failed to send queue card: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -1013,6 +1035,19 @@ async def build_radio_sequence(
             # Cap played history to prevent unbounded memory growth on long sessions
             if len(state["played_tracks"]) > 50:
                 state["played_tracks"] = state["played_tracks"][-50:]
+
+            # Update the live queue card — remove the track we just popped
+            if disc_channel and state.get("queue_display_message_id"):
+                if state.get("upcoming_tracks"):
+                    asyncio.create_task(_update_queue_card(state, disc_channel))
+                else:
+                    # Queue drained — clean up the card
+                    try:
+                        msg = await disc_channel.fetch_message(state["queue_display_message_id"])
+                        await msg.delete()
+                    except Exception:
+                        pass
+                    state.pop("queue_display_message_id", None)
 
             t_curr = f"{track.get('artist')} - {track.get('title')}"
             state["current_track"] = t_curr
