@@ -957,11 +957,13 @@ async def jit_replenish_queue(state, channel=None):
 
 
 def _render_queue_card(state: dict) -> str:
-    """Renders the live queue card from display_queue (songs downloaded and waiting to play)."""
-    entries = state.get("display_queue") or state.get("upcoming_tracks", [])
+    """Renders the live queue card combining downloaded buffer + upcoming-to-download."""
+    # display_queue: downloaded & in playback buffer (mutually exclusive with upcoming_tracks)
+    # upcoming_tracks: JIT-buffered, queued for download next
+    entries = state.get("display_queue", []) + state.get("upcoming_tracks", [])
     if not entries:
         return "🎵 **Upcoming Queue** — empty"
-    visible = entries[:5]
+    visible = entries[:8]
     overflow = len(entries) - len(visible)
     lines = [
         f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"
@@ -970,6 +972,7 @@ def _render_queue_card(state: dict) -> str:
     if overflow > 0:
         lines.append(f"*...and {overflow} more*")
     return "🎵 **Upcoming Queue**\n" + "\n".join(lines)
+
 
 
 
