@@ -818,21 +818,45 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
             "upcoming_tracks": [{"artist": t.get("artist"), "title": t.get("title")} for t in hibernated_state.get("upcoming_tracks", [])[:4]],
         }
 
-    # --- Curate the playlist ---
+    # --- YTM Pre-research: fetch real tracks before asking the LLM ---
+    from app.ytmusic_tools import search_ytmusic_track as _ytm_search, generate_ytmusic_radio as _ytm_radio
+
+    ytm_candidate_tracks = []
+    candidate_pool_seeds = []
+
+    if not explicit_tracks:
+        try:
+            ytm_result = await _ytm_search(playlist_thesis)
+            if ytm_result.get("status") == "success" and ytm_result.get("videoId"):
+                radio_result = await _ytm_radio(ytm_result["videoId"])
+                if radio_result.get("status") == "success":
+                    for track in radio_result.get("tracks", [])[:20]:
+                        artists = track.get("artists", [])
+                        ytm_candidate_tracks.append({
+                            "artist": artists[0] if artists else "Unknown",
+                            "title": track.get("title", ""),
+                            "videoId": track.get("videoId", ""),
+                        })
+            logger.info("YTM pre-research yielded %d candidates for '%s'", len(ytm_candidate_tracks), playlist_thesis)
+        except Exception as e:
+            logger.warning("YTM pre-research failed, falling back to LLM-only: %s", e)
+
+    # --- Build LLM prompt ---
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     client = genai.Client(api_key=api_key)
     model_id = "gemini-3.1-flash-lite"
 
-    candidate_pool_seeds = []
+    data = {}
 
-    # Seeding based on mode
-    if explicit_tracks:
-        import random
-        random.shuffle(explicit_tracks)
-        selected = explicit_tracks[:4]
-        candidate_pool_seeds = explicit_tracks[4:]
-        selected_str = "\n".join([f"- {t.get('artist', '')} - {t.get('title', '')}" for t in selected])
-        prompt = f"""You are a music nerd acting as an internet radio DJ.
+    try:
+        if explicit_tracks:
+            # Explicit playlist path: LLM only derives seed tags, tracks are already chosen
+            import random
+            random.shuffle(explicit_tracks)
+            selected = explicit_tracks[:4]
+            candidate_pool_seeds = explicit_tracks[4:]
+            selected_str = "\n".join([f"- {t.get('artist', '')} - {t.get('title', '')}" for t in selected])
+            prompt = f"""You are a music nerd acting as an internet radio DJ.
 TASK:
 1. The user has provided an explicit playlist. Here are 4 random songs from it:
 {selected_str}
@@ -846,37 +870,71 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
   ],
   "selected_tracks": []
 }}"""
-    elif mode == "discovery_favorites":
-        favs = get_user_favorites(user_id)
-        liked_tracks = favs.get("liked_tracks", [])
-        if not liked_tracks:
-            return {
-                "status": "error",
-                "message": "You don't have any persistent favorites yet! Play some tracks and click the Heart (💖) button to add favorites first.",
-            }
-        favs_str = "\n".join([f"- {t['artist']} - {t['title']}" for t in liked_tracks])
-        prompt = f"""You are a music nerd acting as an internet radio DJ.
-TASK:
-1. The user has requested a discovery radio station based on their favorites list:
-{favs_str}
-2. Dig into your vast musical knowledge and select exactly 4 songs that are SIMILAR to their favorites, but NOT the exact same tracks. Include deep cuts and obscure tracks!
-3. Generate a list of exactly 3-5 relevant, specific Last.fm genre/style tags that describe the sonic vibe of these favorites, along with a weight (a float between 0.1 and 1.0) indicating how strongly it should influence the station's music. The most central tag should have a weight of 1.0.
+            response = await client.aio.models.generate_content(
+                model=model_id,
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt)])],
+            )
+            data = _extract_json(response.text)
+            final_tracks = selected
 
-STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
+        elif ytm_candidate_tracks:
+            # YTM-informed path: LLM picks 4 by index from real tracks
+            candidates_str = "\n".join([
+                f"{i}. {t['artist']} - {t['title']}"
+                for i, t in enumerate(ytm_candidate_tracks)
+            ])
+            prompt = f"""You are an internet radio DJ curating a station for: '{playlist_thesis}' (mode: {mode}).
+
+Here are {len(ytm_candidate_tracks)} real, playable tracks from YouTube Music:
+{candidates_str}
+
+Your tasks:
+1. Select exactly 4 track numbers (0-indexed) from the list above to open the station. Prioritise variety — avoid picking multiple tracks by the same artist unless the request is specifically for that artist.
+2. If the request is artist-specific (e.g. "2Slimey station", "Radiohead radio"), you MUST include at least 1-2 tracks by that artist in your selection.
+3. Generate 3-5 specific Last.fm genre/style tags that capture the sonic vibe, each with a weight (0.1-1.0). Most central tag = 1.0.
+
+CRITICAL: Only use indices from the list above. Do NOT invent tracks.
+
+OUTPUT FORMAT (JSON only, no markdown):
 {{
-  "seed_tags": [
-    {{"tag": "tag1", "weight": 1.0}},
-    {{"tag": "tag2", "weight": 0.7}}
-  ],
-  "selected_tracks": [
-    {{"artist": "Artist1", "title": "Title1"}},
-    {{"artist": "Artist2", "title": "Title2"}},
-    {{"artist": "Artist3", "title": "Title3"}},
-    {{"artist": "Artist4", "title": "Title4"}}
-  ]
+  "seed_tags": [{{"tag": "tag1", "weight": 1.0}}, {{"tag": "tag2", "weight": 0.6}}],
+  "selected_indices": [2, 7, 0, 14]
 }}"""
-    else:
-        prompt = f"""You are a music nerd acting as an internet radio DJ.
+            response = await client.aio.models.generate_content(
+                model=model_id,
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt)])],
+            )
+            data = _extract_json(response.text)
+
+            # Map indices back to tracks
+            indices = data.get("selected_indices", [])
+            seen_ids = set()
+            final_tracks = []
+            for idx in indices:
+                if isinstance(idx, int) and 0 <= idx < len(ytm_candidate_tracks):
+                    t = ytm_candidate_tracks[idx]
+                    vid = t.get("videoId")
+                    if vid not in seen_ids:
+                        final_tracks.append(t)
+                        seen_ids.add(vid)
+
+            # Fill to 4 if LLM gave bad/too-few indices
+            if len(final_tracks) < 4:
+                for t in ytm_candidate_tracks:
+                    if t.get("videoId") not in seen_ids and len(final_tracks) < 4:
+                        final_tracks.append(t)
+                        seen_ids.add(t.get("videoId"))
+
+            final_tracks = final_tracks[:4]
+
+            # Remaining YTM candidates pre-seed the JIT candidate pool
+            selected_ids = {t.get("videoId") for t in final_tracks}
+            candidate_pool_seeds = [t for t in ytm_candidate_tracks if t.get("videoId") not in selected_ids]
+            logger.info("YTM path: %d opening tracks, %d pool seeds", len(final_tracks), len(candidate_pool_seeds))
+
+        else:
+            # Fallback: LLM-only with Last.fm validation (no YTM data available)
+            prompt = f"""You are a music nerd acting as an internet radio DJ.
 TASK:
 1. The user has requested a radio station based on the following theme/thesis: '{playlist_thesis}' with mode: '{mode}'.
 2. Dig into your vast musical knowledge and select exactly 4 songs that create a cohesive listening experience for this theme. Feel free to include deep cuts and obscure tracks!
@@ -895,28 +953,16 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
     {{"artist": "Artist4", "title": "Title4"}}
   ]
 }}"""
+            contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+            response = await client.aio.models.generate_content(model=model_id, contents=contents)
+            text = response.text
+            contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
+            data = _extract_json(text)
 
-    try:
-        contents = [
-            types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-        ]
-        response = await client.aio.models.generate_content(
-            model=model_id,
-            contents=contents,
-        )
-        text = response.text
-        contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
-
-        data = _extract_json(text)
-
-        if explicit_tracks:
-            final_tracks = selected
-        else:
             all_valid_tracks = []
             retries = 0
             current_tracks = data.get("selected_tracks", [])
 
-            # Filter out duplicates from the initial model response
             unique_initial = []
             for track in current_tracks:
                 if not is_duplicate(track, unique_initial):
@@ -925,28 +971,16 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 
             while retries < 3:
                 valid, invalid = await validate_tracklist_via_lastfm(current_tracks)
-
                 for track in valid:
                     if not is_duplicate(track, all_valid_tracks):
                         all_valid_tracks.append(track)
-
                 if len(all_valid_tracks) >= 4:
                     break
-
                 needed = 4 - len(all_valid_tracks)
                 retries += 1
-                logger.info(
-                    "Station curation: %d valid, need %d more (retry %d/3)",
-                    len(all_valid_tracks), needed, retries,
-                )
-
-                already_chosen_str = "\n".join(
-                    [f"- {t.get('artist')} - {t.get('title')}" for t in all_valid_tracks]
-                )
-                invalid_list_str = "\n".join(
-                    [f"- {t.get('artist')} - {t.get('title')}" for t in invalid]
-                )
-
+                logger.info("Station curation fallback: %d valid, need %d more (retry %d/3)", len(all_valid_tracks), needed, retries)
+                already_chosen_str = "\n".join([f"- {t.get('artist')} - {t.get('title')}" for t in all_valid_tracks])
+                invalid_list_str = "\n".join([f"- {t.get('artist')} - {t.get('title')}" for t in invalid])
                 retry_prompt = f"""We currently have the following {len(all_valid_tracks)} validated unique tracks:
 {already_chosen_str}
 
@@ -960,19 +994,12 @@ CRITICAL RULES:
 3. Ensure there are no duplicate songs in your output.
 
 Use the same JSON array format."""
-
                 contents.append(types.Content(role="user", parts=[types.Part.from_text(text=retry_prompt)]))
-                response = await client.aio.models.generate_content(
-                    model=model_id,
-                    contents=contents,
-                )
+                response = await client.aio.models.generate_content(model=model_id, contents=contents)
                 text = response.text
                 contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text)]))
-
                 new_data = _extract_json(text)
                 current_tracks = new_data.get("selected_tracks", [])
-
-                # Filter out duplicates from the newly generated tracks
                 unique_new = []
                 for track in current_tracks:
                     if not is_duplicate(track, unique_new) and not is_duplicate(track, all_valid_tracks):
@@ -981,7 +1008,7 @@ Use the same JSON array format."""
 
             final_tracks = all_valid_tracks[:4]
 
-        # Stage in session state for the Discord embed to pick up (flat keys)
+        # Stage in session state for the Discord embed to pick up
         tool_context.state["staged_station_tracks"] = final_tracks
         tool_context.state["staged_station_thesis"] = playlist_thesis
         tool_context.state["staged_station_mode"] = mode

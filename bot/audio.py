@@ -575,10 +575,28 @@ async def audio_player_task(vc, queue, channel, abort_event):
                     report = ""
 
                 if file_path and os.path.exists(file_path):
-                    await channel.send(
+                    # Delete previous now-playing message if one exists
+                    if hasattr(channel, "guild") and channel.guild:
+                        state = active_radios.get(channel.guild.id)
+                        if state:
+                            old_msg_id = state.pop("now_playing_message_id", None)
+                            if old_msg_id:
+                                try:
+                                    old_msg = await channel.fetch_message(old_msg_id)
+                                    await old_msg.delete()
+                                except Exception:
+                                    pass
+
+                    sent_msg = await channel.send(
                         f"\U0001f4fb Now Playing: **{label}**",
                         view=SkipView(vc, queue, abort_event),
                     )
+
+                    # Store new message ID for deletion next song
+                    if hasattr(channel, "guild") and channel.guild:
+                        state = active_radios.get(channel.guild.id)
+                        if state:
+                            state["now_playing_message_id"] = sent_msg.id
 
                     if report:
                         try:
@@ -880,8 +898,8 @@ async def jit_replenish_queue(state, channel=None):
             if is_disliked_track:
                 continue
 
-            # Exclude persistent favorites in discovery modes
-            if mode in ["discovery_genre", "discovery_favorites"]:
+            # Exclude persistent favorites in discovery_genre mode
+            if mode == "discovery_genre":
                 is_favorited = any(
                     t.get("artist", "").lower().strip() == key[0]
                     and t.get("title", "").lower().strip() == key[1]
@@ -902,8 +920,6 @@ async def jit_replenish_queue(state, channel=None):
                 score += 10
             if artist.lower() in disliked_artists:
                 score -= 30
-            if mode == "discovery_favorites" and artist.lower() in fav_artists:
-                score -= 15
 
             scored_candidates.append((score, c_data))
 
