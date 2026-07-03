@@ -597,6 +597,8 @@ async def audio_player_task(vc, queue, channel, abort_event):
                         state = active_radios.get(channel.guild.id)
                         if state:
                             state["now_playing_message_id"] = sent_msg.id
+                            # Update the live queue card now that a new song is actually playing
+                            asyncio.create_task(_update_queue_card(state, channel))
 
                     if report:
                         try:
@@ -1035,19 +1037,6 @@ async def build_radio_sequence(
             # Cap played history to prevent unbounded memory growth on long sessions
             if len(state["played_tracks"]) > 50:
                 state["played_tracks"] = state["played_tracks"][-50:]
-
-            # Update the live queue card — remove the track we just popped
-            if disc_channel and state.get("queue_display_message_id"):
-                if state.get("upcoming_tracks"):
-                    asyncio.create_task(_update_queue_card(state, disc_channel))
-                else:
-                    # Queue drained — clean up the card
-                    try:
-                        msg = await disc_channel.fetch_message(state["queue_display_message_id"])
-                        await msg.delete()
-                    except Exception:
-                        pass
-                    state.pop("queue_display_message_id", None)
 
             t_curr = f"{track.get('artist')} - {track.get('title')}"
             state["current_track"] = t_curr
