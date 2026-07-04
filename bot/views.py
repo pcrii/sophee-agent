@@ -236,6 +236,8 @@ For each, write a 1-sentence blurb describing what this visual combination looks
         for idx, style_info in enumerate(styles_data):
             plain = style_info.get('style_string', '')
             linked = display_lookup.get(plain, plain)
+            # Stamp the linked version onto the dict so the callback can use it in the thread
+            style_info['display_string'] = linked
             embed.add_field(name=f"Style {idx+1}", value=f"**{linked}**\n{style_info.get('blurb')}", inline=False)
             
         view = StyleSelectionView(
@@ -341,7 +343,9 @@ class StyleSelectionView(discord.ui.View):
                             fetched_msg = await channel.fetch_message(sent_msg.id)
                             active_thread = await fetched_msg.create_thread(name="Image Details")
                             from bot.message_utils import send_message_in_chunks
-                            await send_message_in_chunks(active_thread, response_text, is_thread=True)
+                            display_str = style_info.get('display_string', style_str)
+                            thread_content = f"**Style:** {display_str}\n\n{response_text}"
+                            await send_message_in_chunks(active_thread, thread_content, is_thread=True)
                             await active_thread.edit(archived=True)
                         except Exception as thread_err:
                             logger.warning("Error creating thread: %s", thread_err)
