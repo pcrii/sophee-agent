@@ -328,9 +328,9 @@ class StyleSelectionView(discord.ui.View):
                         self.runner, self.artifact_service, self.session_service, self.update_state_fn,
                     )
                     
-                    # Edit the placeholder with the final image
+                    # Edit the placeholder with the final image (no text — details live in the thread)
                     sent_msg = await placeholder.edit(
-                        content=f"\U0001f58c\ufe0f **Restyled**\n\n{response_text}", 
+                        content="🖌️ **Restyled**", 
                         attachments=[discord.File(temp_path)], 
                         view=view
                     )
