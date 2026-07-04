@@ -187,12 +187,20 @@ async def _trigger_restyle_options(interaction, parent_msg_id, original_prompt, 
         lightings = [name for name, cat in catalog.items() if cat == "lighting_and_atmosphere"]
         genres = [name for name, cat in catalog.items() if cat == "genre_and_subject"]
         
+        import urllib.parse
+
+        def _google_link(name: str) -> str:
+            url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(name + " artist")
+            return f"[{name}]({url})"
+
         style_strings = []
+        display_strings = []   # linked version for Discord embed
         for _ in range(3):
             m = random.choice(mediums)
             l = random.choice(lightings)
             g = random.choice(genres)
             style_strings.append(f"art by {m}, {l}, and {g}")
+            display_strings.append(f"art by {_google_link(m)}, {_google_link(l)}, and {_google_link(g)}")
             
         prompt = f"""Here are 3 artistic style combinations based on the prompt '{original_prompt}':
 1. {style_strings[0]}
@@ -221,9 +229,14 @@ For each, write a 1-sentence blurb describing what this visual combination looks
             await interaction.followup.send("Failed to generate style options.", ephemeral=True)
             return
 
+        # Map plain style_string → linked display_string
+        display_lookup = {style_strings[i]: display_strings[i] for i in range(len(style_strings))}
+
         embed = discord.Embed(title="\U0001f58c\ufe0f Choose a New Style", color=0x2b2d31)
         for idx, style_info in enumerate(styles_data):
-            embed.add_field(name=f"Style {idx+1}", value=f"**{style_info.get('style_string')}**\n{style_info.get('blurb')}", inline=False)
+            plain = style_info.get('style_string', '')
+            linked = display_lookup.get(plain, plain)
+            embed.add_field(name=f"Style {idx+1}", value=f"**{linked}**\n{style_info.get('blurb')}", inline=False)
             
         view = StyleSelectionView(
             styles_data, original_prompt, user_id, session_id,
@@ -231,6 +244,7 @@ For each, write a 1-sentence blurb describing what this visual combination looks
         )
         
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
         
     except Exception as e:
         logger.error("Error generating style options: %s", e)
