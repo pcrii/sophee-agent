@@ -253,6 +253,89 @@ For each, write a 1-sentence blurb describing what this visual combination looks
         await interaction.followup.send(f"Error: {e}", ephemeral=True)
 
 
+async def trigger_restyle_from_message(
+    message,           # discord.Message that triggered the restyle
+    ref_msg,           # discord.Message being restyled (has the image)
+    original_prompt,   # str — prompt to restyle from
+    user_id, session_id, runner, artifact_service, session_service, update_state_fn,
+):
+    """Triggers the restyle style-picker from a plain message reply (non-ephemeral)."""
+    import random, json, os, urllib.parse
+
+    catalog_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "artists_catalog.json"
+    )
+    if not os.path.exists(catalog_path):
+        await message.reply("Artists catalog not found.")
+        return
+
+    try:
+        with open(catalog_path, encoding="utf-8") as f:
+            catalog = json.load(f)
+
+        mediums   = [name for name, cat in catalog.items() if cat == "medium_and_line"]
+        lightings = [name for name, cat in catalog.items() if cat == "lighting_and_atmosphere"]
+        genres    = [name for name, cat in catalog.items() if cat == "genre_and_subject"]
+
+        def _google_link(name: str) -> str:
+            url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(name + " artist")
+            return f"[{name}]({url})"
+
+        style_strings, display_strings = [], []
+        for _ in range(3):
+            m, l, g = random.choice(mediums), random.choice(lightings), random.choice(genres)
+            style_strings.append(f"art by {m}, {l}, and {g}")
+            display_strings.append(f"art by {_google_link(m)}, {_google_link(l)}, and {_google_link(g)}")
+
+        prompt = f"""Here are 3 artistic style combinations based on the prompt '{original_prompt}':
+1. {style_strings[0]}
+2. {style_strings[1]}
+3. {style_strings[2]}
+
+For each, write a 1-sentence blurb describing what this visual combination looks like. Return STRICTLY a JSON array of 3 objects, each with 'style_string' (the exact string provided above) and 'blurb'. Use markdown ```json format."""
+
+        await update_state_fn(user_id, session_id, {})
+        response_text = await _run_agent_and_get_text(runner, user_id, session_id, prompt)
+
+        try:
+            if "```json" in response_text:
+                json_str = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text:
+                json_str = response_text.split("```")[1].strip()
+            else:
+                json_str = response_text.strip()
+            styles_data = json.loads(json_str)
+        except Exception as parse_e:
+            logger.error("Failed to parse restyle JSON: %s", parse_e)
+            await message.reply("Failed to generate style options.")
+            return
+
+        display_lookup = {style_strings[i]: display_strings[i] for i in range(len(style_strings))}
+
+        embed = discord.Embed(
+            title="🖌️ Choose a New Style",
+            description=f"Restyling image from {ref_msg.author.display_name}",
+            color=0x2b2d31,
+        )
+        for idx, style_info in enumerate(styles_data):
+            plain  = style_info.get("style_string", "")
+            linked = display_lookup.get(plain, plain)
+            style_info["display_string"] = linked
+            embed.add_field(name=f"Style {idx+1}", value=f"**{linked}**\n{style_info.get('blurb')}", inline=False)
+
+        view = StyleSelectionView(
+            styles_data, original_prompt, user_id, session_id,
+            runner, artifact_service, session_service, update_state_fn,
+            parent_msg_id=str(ref_msg.id),
+        )
+
+        # Send as a visible reply (not ephemeral — anyone can see and pick a style)
+        await message.reply(embed=embed, view=view)
+
+    except Exception as e:
+        logger.error("Error in trigger_restyle_from_message: %s", e)
+        await message.reply(f"Error generating style options: {e}")
+
 class StyleSelectionView(discord.ui.View):
     def __init__(self, styles_data, original_prompt, user_id, session_id, runner, artifact_service, session_service, update_state_fn, parent_msg_id):
         super().__init__(timeout=None)

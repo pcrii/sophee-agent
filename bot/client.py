@@ -787,6 +787,35 @@ async def on_message(message: discord.Message):
                     image_data = result
                     break
 
+    # --- Restyle shortcut: "@bot restyle" while replying to any image ---
+    if "restyle" in msg_text.lower():
+        ref = message.reference
+        if ref and ref.resolved and isinstance(ref.resolved, discord.Message):
+            ref_msg = ref.resolved
+            ref_attachments = [a for a in ref_msg.attachments if a.content_type and a.content_type.startswith("image")]
+            if ref_attachments:
+                from bot.views import trigger_restyle_from_message
+                # Use stored metadata prompt if it's a bot image, else fall back to message text
+                ref_meta = await get_image_metadata(str(ref_msg.id))
+                if ref_meta and ref_meta.get("prompt"):
+                    original_prompt = ref_meta["prompt"]
+                else:
+                    # External image: use the replied message's text, or the attachment filename
+                    original_prompt = ref_msg.content.strip() or ref_attachments[0].filename.rsplit(".", 1)[0]
+
+                await trigger_restyle_from_message(
+                    message=message,
+                    ref_msg=ref_msg,
+                    original_prompt=original_prompt,
+                    user_id=user_id,
+                    session_id=session_id,
+                    runner=runner,
+                    artifact_service=artifact_service,
+                    session_service=session_service,
+                    update_state_fn=update_session_state,
+                )
+                return  # skip the normal agent turn
+
     try:
         await execute_agent_turn(
             channel=message.channel,
