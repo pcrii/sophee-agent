@@ -963,7 +963,7 @@ def _render_queue_card(state: dict) -> str:
     entries = state.get("display_queue", []) + state.get("upcoming_tracks", [])
     if not entries:
         return "🎵 **Upcoming Queue** — empty"
-    visible = entries[:8]
+    visible = entries[:25]
     overflow = len(entries) - len(visible)
     lines = [
         f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"

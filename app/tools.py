@@ -850,17 +850,15 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
 
     try:
         if explicit_tracks:
-            # Explicit playlist path: LLM only derives seed tags, tracks are already chosen
-            import random
-            random.shuffle(explicit_tracks)
-            selected = explicit_tracks[:4]
-            candidate_pool_seeds = explicit_tracks[4:]
-            selected_str = "\n".join([f"- {t.get('artist', '')} - {t.get('title', '')}" for t in selected])
+            # Explicit playlist path: preserve all tracks for the queue
+            # We sample the first 4 (if available) to show the LLM to derive seed tags
+            sample_for_llm = explicit_tracks[:4]
+            selected_str = "\n".join([f"- {t.get('artist', '')} - {t.get('title', '')}" for t in sample_for_llm])
             prompt = f"""You are a music nerd acting as an internet radio DJ.
 TASK:
-1. The user has provided an explicit playlist. Here are 4 random songs from it:
+1. The user has provided an explicit playlist. Here are up to 4 sample songs from it:
 {selected_str}
-2. You do NOT need to select any tracks. Just generate a list of exactly 3-5 relevant, specific Last.fm genre/style tags that describe the sonic vibe of these 4 tracks, along with a weight (a float between 0.1 and 1.0) indicating how strongly it should influence the station's future algorithmic recommendations. The most central tag should have a weight of 1.0.
+2. You do NOT need to select any tracks. Just generate a list of exactly 3-5 relevant, specific Last.fm genre/style tags that describe the sonic vibe of these tracks, along with a weight (a float between 0.1 and 1.0) indicating how strongly it should influence the station's future algorithmic recommendations. The most central tag should have a weight of 1.0.
 
 STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
 {{
@@ -875,7 +873,8 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
                 contents=[types.Content(role="user", parts=[types.Part.from_text(text=prompt)])],
             )
             data = _extract_json(response.text)
-            final_tracks = selected
+            final_tracks = explicit_tracks
+            candidate_pool_seeds = []
 
         elif ytm_candidate_tracks:
             # YTM-informed path: LLM picks 4 by index from real tracks
