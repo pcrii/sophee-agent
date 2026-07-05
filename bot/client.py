@@ -193,7 +193,7 @@ async def resurrect_radio_station(session, active_radio):
 
     # Spawn player tasks
     abort_event = asyncio.Event()
-    audio_queue = asyncio.Queue()
+    audio_queue = asyncio.Queue(maxsize=3)
     task1 = asyncio.create_task(
         audio_player_task(vc, audio_queue, text_channel, abort_event)
     )
