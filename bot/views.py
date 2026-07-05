@@ -110,6 +110,49 @@ async def _run_agent_and_get_image(
     return None, response_text, None
 
 
+async def _restyle_image_direct(image_bytes: bytes, image_mime: str, style_str: str, resolution: str = "0.5k") -> tuple:
+    """Directly calls the Interactions API with image + style string. No agent, no prompt rewriting.
+    Returns (temp_file_path, new_image_key) or (None, None) on failure.
+    """
+    import google.genai as genai
+    import hashlib
+
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    client = genai.Client(api_key=api_key)
+
+    api_image_size = "1K" if resolution.lower().strip() == "1k" else "512"
+
+    input_data = [
+        {
+            "type": "image",
+            "data": base64.b64encode(image_bytes).decode("utf-8"),
+            "mime_type": image_mime,
+        },
+        {
+            "type": "text",
+            "text": style_str,
+        },
+    ]
+
+    try:
+        interaction = await client.aio.interactions.create(
+            model="gemini-3.1-flash-image",
+            input=input_data,
+            response_format={"type": "image", "image_size": api_image_size},
+        )
+        generated = interaction.output_image
+        if not generated:
+            return None, None
+
+        result_bytes = base64.b64decode(generated.data)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpeg", mode="wb") as f:
+            f.write(result_bytes)
+            return f.name, f"restyle_{hashlib.md5(style_str.encode()).hexdigest()[:8]}.jpeg"
+    except Exception as e:
+        logger.error("Error in _restyle_image_direct: %s", e)
+        return None, None
+
+
 async def _run_agent_and_get_text(runner, user_id, session_id, prompt_text):
     """Runs the agent with a prompt and returns the text response."""
     response_text = ""
@@ -412,33 +455,36 @@ class StyleSelectionView(discord.ui.View):
                 else:
                     placeholder = await channel.send("🖌️ *Applying new style...*")
 
-                import re
-                # Strip out any existing 'art by...' string to prevent conflicting styles
-                clean_prompt = re.sub(r'[\,\.\s]*art by[^\.]+?\.', '.', self.original_prompt, flags=re.IGNORECASE)
-                clean_prompt = re.sub(r'[\,\.\s]*art by.*$', '', clean_prompt, flags=re.IGNORECASE)
-                clean_prompt = clean_prompt.strip()
+                # --- Direct restyle: image bytes + style string, no LLM in the middle ---
+                image_bytes = self.image_bytes
+                image_mime = getattr(self, 'image_mime', 'image/jpeg')
 
-                if self.image_bytes:
-                    # External image: pass it as multimodal input — edit the actual pixels
-                    run_prompt = f"Edit this image. Apply this specific artistic style to it: '{style_str}'. Keep the core subject and composition intact, but fully transform the visual style, medium, lighting, and atmosphere."
-                    await self.update_state_fn(self.user_id, self.session_id, {
-                        "rolled_style": style_str,
-                        "force_style_roll": True,
-                        "art_director_mode": "simple",
-                        "start_fresh_image": False,
-                    })
-                    temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                        self.runner, self.artifact_service, self.user_id, self.session_id,
-                        run_prompt, image_bytes=self.image_bytes,
-                        image_mime=getattr(self, 'image_mime', 'image/png'),
+                if image_bytes is None:
+                    # Button restyle on bot image: load from artifact store
+                    try:
+                        meta = await get_image_metadata(str(self.parent_msg_id))
+                        artifact_key = meta.get("image_artifact") if meta else None
+                        if artifact_key:
+                            part = await self.artifact_service.load_artifact(
+                                app_name="app",
+                                user_id=self.user_id,
+                                filename=artifact_key,
+                                session_id=self.session_id,
+                            )
+                            if part and part.inline_data:
+                                image_bytes = part.inline_data.data
+                                image_mime = part.inline_data.mime_type or "image/jpeg"
+                    except Exception as load_err:
+                        logger.warning("Could not load artifact for restyle: %s", load_err)
+
+                if image_bytes:
+                    temp_path, new_image_key = await _restyle_image_direct(
+                        image_bytes, image_mime, style_str
                     )
                 else:
-                    # Bot-generated image: rewrite the text prompt with the new style
-                    run_prompt = f"I want to restyle an image. The old prompt is: '{clean_prompt}'. Please completely rewrite this prompt to STRIP OUT all old style language (lighting, aesthetic, atmosphere, medium) so that only the core subject remains, and then apply this specific new artistic style to it: '{style_str}'."
-                    temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                        self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
-                    )
-                
+                    await placeholder.edit(content="Could not load source image for restyle.")
+                    return
+
                 await self.update_state_fn(self.user_id, self.session_id, {
                     "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
                 })
@@ -448,41 +494,36 @@ class StyleSelectionView(discord.ui.View):
                         self.user_id, self.session_id,
                         self.runner, self.artifact_service, self.session_service, self.update_state_fn,
                     )
-                    
-                    # Edit the placeholder with the final image (no text — details live in the thread)
+
                     sent_msg = await placeholder.edit(
-                        content="🖌️ **Restyled**", 
-                        attachments=[discord.File(temp_path)], 
+                        content="🖌️ **Restyled**",
+                        attachments=[discord.File(temp_path)],
                         view=view
                     )
-                    
-                    # Create the thread
-                    if response_text:
-                        try:
-                            fetched_msg = await channel.fetch_message(sent_msg.id)
-                            active_thread = await fetched_msg.create_thread(name="Image Details")
-                            from bot.message_utils import send_message_in_chunks
-                            display_str = style_info.get('display_string', style_str)
-                            thread_content = f"**Style:** {display_str}\n\n{response_text}"
-                            await send_message_in_chunks(active_thread, thread_content, is_thread=True)
-                            await active_thread.edit(archived=True)
-                        except Exception as thread_err:
-                            logger.warning("Error creating thread: %s", thread_err)
-                            
+
+                    try:
+                        fetched_msg = await channel.fetch_message(sent_msg.id)
+                        active_thread = await fetched_msg.create_thread(name="Image Details")
+                        from bot.message_utils import send_message_in_chunks
+                        display_str = style_info.get('display_string', style_str)
+                        await send_message_in_chunks(active_thread, f"**Style:** {display_str}", is_thread=True)
+                        await active_thread.edit(archived=True)
+                    except Exception as thread_err:
+                        logger.warning("Error creating thread: %s", thread_err)
+
                     os.remove(temp_path)
-                    
-                    session = await self.session_service.get_session(app_name="app", user_id=self.user_id, session_id=self.session_id)
-                    last_prompt = session.state.get("last_generated_prompt") if session else None
+
                     await save_image_metadata(
                         message_id=str(sent_msg.id),
-                        prompt=last_prompt or self.original_prompt or "restyled image",
+                        prompt=self.original_prompt or "restyled image",
                         style=style_str,
-                        resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
-                        image_artifact=new_image_key,
+                        resolution="0.5k",
+                        image_artifact=new_image_key or "",
                         session_id=self.session_id,
                     )
                 else:
-                    await interaction.followup.send(response_text or "Failed to restyle image.", ephemeral=True)
+                    await placeholder.edit(content="Failed to restyle image.")
+
             except Exception as e:
                 logger.error("Error generating chosen style: %s", e)
                 await interaction.followup.send(f"Error generating style: {e}", ephemeral=True)
