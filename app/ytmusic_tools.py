@@ -320,48 +320,14 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
                 "tracks": parsed_tracks
             }
             
-        jit_enabled = state.get("jit_enabled", True)
+        state.setdefault("upcoming_tracks", []).extend(parsed_tracks)
         
-        if not jit_enabled:
-            # Check if single artist (album)
-            artists_set = set(t["artist"] for t in parsed_tracks)
-            is_single_artist = len(artists_set) == 1
-            
-            if not is_single_artist:
-                import random
-                random.shuffle(parsed_tracks)
-                
-            state.setdefault("upcoming_tracks", []).extend(parsed_tracks)
-            return {
-                "status": "success",
-                "message": f"JIT is OFF. Added {len(parsed_tracks)} tracks directly to the queue. Order maintained: {is_single_artist}."
-            }
-        else:
-            # JIT is ON. 
-            import random
-            random.shuffle(parsed_tracks)
-            
-            # Enqueue the first 4 tracks directly to the playhead
-            seed_tracks = parsed_tracks[:4]
-            candidate_tracks = parsed_tracks[4:]
-            
-            state.setdefault("upcoming_tracks", []).extend(seed_tracks)
-            
-            # Dump the rest into the candidate pool
-            pool = state.setdefault("candidate_pool", [])
-            for pt in candidate_tracks:
-                # Add to candidate pool with high score so it gets picked
-                pool.append({
-                    "track": pt,
-                    "base_score": 50,
-                    "age": 0
-                })
-                
-            return {
-                "status": "success",
-                "message": f"JIT is ON. Seeded {len(seed_tracks)} playlist tracks directly to the queue, and placed {len(candidate_tracks)} into the candidate pool to organically steer the station."
-            }
-            
+        jit_status = "ON (will take over when queue runs low)" if state.get("jit_enabled", True) else "OFF"
+        
+        return {
+            "status": "success",
+            "message": f"Added all {len(parsed_tracks)} tracks directly to the queue in original order. JIT is {jit_status}."
+        }
     except Exception as e:
         logger.error(f"YTMusic load playlist error: {e}")
         return {"status": "error", "message": str(e)}
