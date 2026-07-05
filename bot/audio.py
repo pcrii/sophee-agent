@@ -885,11 +885,15 @@ async def jit_replenish_queue(state, channel=None):
                 continue
             seen.add(key)
 
-            # Check duplication against upcoming, played, and currently added
+            # Check duplication against upcoming, played, currently added, AND the display queue
+            # (Tracks in the display queue are buffered for playback, so JIT must know about them)
+            all_known = state["upcoming_tracks"] + played_tracks + added_tracks + state.get("display_queue", [])
+            vid = str(track.get("videoId", "")).strip()
+            
             is_dup = any(
-                t.get("artist", "").lower().strip() == key[0]
-                and t.get("title", "").lower().strip() == key[1]
-                for t in state["upcoming_tracks"] + played_tracks + added_tracks
+                (t.get("artist", "").lower().strip() == key[0] and t.get("title", "").lower().strip() == key[1])
+                or (vid and t.get("videoId") == vid)
+                for t in all_known
             )
             if is_dup:
                 continue
