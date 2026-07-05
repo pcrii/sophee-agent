@@ -112,7 +112,7 @@ async def _run_agent_and_get_image(
 
 async def _restyle_image_direct(image_bytes: bytes, image_mime: str, style_str: str, resolution: str = "0.5k") -> tuple:
     """Directly calls the Interactions API with image + style string. No agent, no prompt rewriting.
-    Returns (temp_file_path, new_image_key) or (None, None) on failure.
+    Returns (temp_file_path, new_image_key, error_msg).
     """
     import google.genai as genai
     import hashlib
@@ -143,15 +143,21 @@ async def _restyle_image_direct(image_bytes: bytes, image_mime: str, style_str: 
         generated = interaction.output_image
         if not generated:
             logger.warning("Interactions API returned 200 OK but no output_image. Interaction dump: %s", str(interaction))
-            return None, None
+            # Try to dig out a finish reason if available
+            finish_reason = "Unknown safety filter or blocked by policy."
+            if hasattr(interaction, "candidates") and interaction.candidates:
+                cand = interaction.candidates[0]
+                if hasattr(cand, "finish_reason"):
+                    finish_reason = str(cand.finish_reason)
+            return None, None, f"Blocked: {finish_reason}"
 
         result_bytes = base64.b64decode(generated.data)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpeg", mode="wb") as f:
             f.write(result_bytes)
-            return f.name, f"restyle_{hashlib.md5(style_str.encode()).hexdigest()[:8]}.jpeg"
+            return f.name, f"restyle_{hashlib.md5(style_str.encode()).hexdigest()[:8]}.jpeg", None
     except Exception as e:
         logger.error("Error in _restyle_image_direct: %s", e)
-        return None, None
+        return None, None, str(e)
 
 
 async def _run_agent_and_get_text(runner, user_id, session_id, prompt_text):
@@ -479,7 +485,7 @@ class StyleSelectionView(discord.ui.View):
                         logger.warning("Could not load artifact for restyle: %s", load_err)
 
                 if image_bytes:
-                    temp_path, new_image_key = await _restyle_image_direct(
+                    temp_path, new_image_key, error_msg = await _restyle_image_direct(
                         image_bytes, image_mime, style_str
                     )
                 else:
@@ -523,7 +529,10 @@ class StyleSelectionView(discord.ui.View):
                         session_id=self.session_id,
                     )
                 else:
-                    await placeholder.edit(content="Failed to restyle image.")
+                    fail_msg = "Failed to restyle image."
+                    if 'error_msg' in locals() and error_msg:
+                        fail_msg = f"Failed to restyle image (API Error): {error_msg}"
+                    await placeholder.edit(content=fail_msg)
 
             except Exception as e:
                 logger.error("Error generating chosen style: %s", e)
