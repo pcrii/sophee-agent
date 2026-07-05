@@ -258,13 +258,13 @@ async def get_ytmusic_mood_playlists(category: str, tool_context: Optional[ToolC
         return {"status": "error", "message": str(e)}
 
 async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolContext] = None) -> Dict[str, Any]:
-    """Loads a YouTube Music playlist. 
-    Can be used to simply inspect the contents of a playlist.
+    """Loads an official YouTube Music playlist OR album.
+    Can be used to simply inspect the contents, or enqueue them to the radio.
     If there is an active radio station and JIT generation is disabled, it adds the tracks directly to the upcoming queue (maintaining order for single-artist albums, shuffling otherwise).
     If JIT is enabled, it dumps the tracks into the candidate pool to act as mathematical seeds.
     
     Args:
-        playlist_id: The ID of the playlist (starts with PL or RD). If you don't know the ID, you can pass the playlist name and this tool will search for the ID for you.
+        playlist_id: The ID of the playlist or album. If you don't know the ID, you can pass the album/playlist name and this tool will search for it globally.
         
     Returns:
         A dictionary containing the loaded status and the tracks.
@@ -278,24 +278,30 @@ async def load_ytmusic_playlist(playlist_id: str, tool_context: Optional[ToolCon
             if owner_client:
                 client_to_use = owner_client
                 
-        # If the agent passed a name instead of an ID, try to find it first
-        if not playlist_id.startswith(("PL", "VL", "RD", "LM")):
-            logger.info(f"Playlist ID doesn't look like an ID, searching library for: {playlist_id}")
-            playlists_res = await asyncio.to_thread(client_to_use.search, playlist_id, filter="playlists", scope="library")
-            if not playlists_res:
-                return {"status": "error", "message": f"Could not find any playlist named '{playlist_id}' in your library."}
+        # If the agent passed a name instead of an ID, try to find it globally
+        if not playlist_id.startswith(("PL", "VL", "RD", "LM", "MPREb_", "OL")):
+            logger.info(f"ID doesn't look like an ID, searching globally for: {playlist_id}")
+            # Try albums first, then playlists
+            res = await asyncio.to_thread(client_to_use.search, playlist_id, filter="albums")
+            if not res:
+                res = await asyncio.to_thread(client_to_use.search, playlist_id, filter="playlists")
+            if not res:
+                return {"status": "error", "message": f"Could not find any album or playlist named '{playlist_id}'."}
             
-            # Use the top match's playlist ID (ytmusicapi usually returns browseId for playlists)
-            playlist_id = playlists_res[0].get("browseId") or playlists_res[0].get("playlistId")
+            playlist_id = res[0].get("browseId") or res[0].get("playlistId")
             if not playlist_id:
-                return {"status": "error", "message": f"Found playlist but could not extract its ID."}
+                return {"status": "error", "message": f"Found result but could not extract its ID."}
                 
-            logger.info(f"Found matching playlist ID: {playlist_id}")
+            logger.info(f"Found matching ID: {playlist_id}")
 
         if playlist_id == "LM":
-            # Liked songs uses a different method
+            # Liked Music
             playlist_data = await asyncio.to_thread(client_to_use.get_liked_songs, limit=50)
+        elif playlist_id.startswith("MPREb_") or playlist_id.startswith("OL"):
+            # It's an album
+            playlist_data = await asyncio.to_thread(client_to_use.get_album, playlist_id)
         else:
+            # It's a standard playlist
             playlist_data = await asyncio.to_thread(client_to_use.get_playlist, playlist_id, limit=50)
             
         tracks = playlist_data.get("tracks", [])
