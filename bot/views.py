@@ -53,21 +53,25 @@ def create_user_profile_embed(user_prefs: dict) -> discord.Embed:
 # ---------------------------------------------------------------------------
 
 async def _run_agent_and_get_image(
-    runner, artifact_service, user_id, session_id, prompt_text
+    runner, artifact_service, user_id, session_id, prompt_text, image_bytes=None, image_mime="image/png"
 ):
-    """Runs the agent with a prompt and returns (temp_file_path, response_text, new_image_key) or (None, response_text, None)."""
+    """Runs the agent with a prompt (and optional image) and returns (temp_file_path, response_text, new_image_key)."""
     before_keys = set(
         await artifact_service.list_artifact_keys(
             app_name="app", user_id=user_id, session_id=session_id
         )
     )
 
+    parts = [types.Part.from_text(text=prompt_text)]
+    if image_bytes:
+        parts.append(types.Part.from_bytes(data=image_bytes, mime_type=image_mime))
+
     response_text = ""
     async for event in runner.run_async(
         user_id=user_id,
         session_id=session_id,
         new_message=types.Content(
-            role="user", parts=[types.Part.from_text(text=prompt_text)]
+            role="user", parts=parts
         ),
     ):
         if event.is_final_response():
@@ -329,6 +333,23 @@ For each, write a 1-sentence blurb describing what this visual combination looks
             parent_msg_id=str(ref_msg.id),
         )
 
+        # Download the referenced image so make_callback can pass it to the image gen model
+        import aiohttp
+        image_bytes = None
+        image_mime = "image/png"
+        if ref_msg.attachments:
+            att = ref_msg.attachments[0]
+            try:
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(att.url) as resp:
+                        if resp.status == 200:
+                            image_bytes = await resp.read()
+                            image_mime = att.content_type or "image/png"
+            except Exception as dl_err:
+                logger.warning("Could not download image for restyle: %s", dl_err)
+        view.image_bytes = image_bytes
+        view.image_mime = image_mime
+
         # Send as a visible reply (not ephemeral — anyone can see and pick a style)
         await message.reply(embed=embed, view=view)
 
@@ -348,6 +369,7 @@ class StyleSelectionView(discord.ui.View):
         self.session_service = session_service
         self.update_state_fn = update_state_fn
         self.parent_msg_id = parent_msg_id
+        self.image_bytes = getattr(self, 'image_bytes', None)  # set after init if needed
 
         # Add buttons for each style dynamically
         for idx, style_info in enumerate(styles_data):
@@ -393,15 +415,29 @@ class StyleSelectionView(discord.ui.View):
                 import re
                 # Strip out any existing 'art by...' string to prevent conflicting styles
                 clean_prompt = re.sub(r'[\,\.\s]*art by[^\.]+?\.', '.', self.original_prompt, flags=re.IGNORECASE)
-                # Also strip if it doesn't end with a period
                 clean_prompt = re.sub(r'[\,\.\s]*art by.*$', '', clean_prompt, flags=re.IGNORECASE)
                 clean_prompt = clean_prompt.strip()
 
-                run_prompt = f"I want to restyle an image. The old prompt is: '{clean_prompt}'. Please completely rewrite this prompt to STRIP OUT all old style language (lighting, aesthetic, atmosphere, medium) so that only the core subject remains, and then apply this specific new artistic style to it: '{style_str}'."
-                
-                temp_path, response_text, new_image_key = await _run_agent_and_get_image(
-                    self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
-                )
+                if self.image_bytes:
+                    # External image: pass it as multimodal input — edit the actual pixels
+                    run_prompt = f"Edit this image. Apply this specific artistic style to it: '{style_str}'. Keep the core subject and composition intact, but fully transform the visual style, medium, lighting, and atmosphere."
+                    await self.update_state_fn(self.user_id, self.session_id, {
+                        "rolled_style": style_str,
+                        "force_style_roll": True,
+                        "art_director_mode": "simple",
+                        "start_fresh_image": False,
+                    })
+                    temp_path, response_text, new_image_key = await _run_agent_and_get_image(
+                        self.runner, self.artifact_service, self.user_id, self.session_id,
+                        run_prompt, image_bytes=self.image_bytes,
+                        image_mime=getattr(self, 'image_mime', 'image/png'),
+                    )
+                else:
+                    # Bot-generated image: rewrite the text prompt with the new style
+                    run_prompt = f"I want to restyle an image. The old prompt is: '{clean_prompt}'. Please completely rewrite this prompt to STRIP OUT all old style language (lighting, aesthetic, atmosphere, medium) so that only the core subject remains, and then apply this specific new artistic style to it: '{style_str}'."
+                    temp_path, response_text, new_image_key = await _run_agent_and_get_image(
+                        self.runner, self.artifact_service, self.user_id, self.session_id, run_prompt
+                    )
                 
                 await self.update_state_fn(self.user_id, self.session_id, {
                     "force_style_roll": False, "art_director_mode": "simple", "start_fresh_image": False,
