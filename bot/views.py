@@ -142,6 +142,7 @@ async def _restyle_image_direct(image_bytes: bytes, image_mime: str, style_str: 
         )
         generated = interaction.output_image
         if not generated:
+            logger.warning("Interactions API returned 200 OK but no output_image. Interaction dump: %s", str(interaction))
             return None, None
 
         result_bytes = base64.b64decode(generated.data)
