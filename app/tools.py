@@ -1192,18 +1192,18 @@ Ensure the divider "#### TRANSCRIPT" is used exactly as written before the spoke
 # Image Generation
 # ---------------------------------------------------------------------------
 
-async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = "0.5k", edit_mode: str = "inpainting", enable_search_grounding: bool = False) -> dict:
+async def generate_image(prompt: str, tool_context: ToolContext, resolution: str = None, aspect_ratio: str = None, model: str = None, edit_mode: str = "inpainting", enable_search_grounding: bool = False) -> dict:
     """Generates OR edits a high-quality image based on a detailed text prompt.
     If the user uploads an image or requests an edit, ALWAYS use this tool. The tool will automatically use their latest image as the reference for the edit.
     Saves the output image to the user's artifacts (persistent across sessions).
 
     Args:
         prompt: The detailed description of the image to generate.
-        resolution: The resolution of the image to generate. Supported values:
-                    - '0.5k' (default, generates a 512x512 image)
-                    - '1k' (generates a 1024x1024 image)
+        resolution: Optional override for the resolution ('0.5k' or '1k'). Uses session default if None.
+        aspect_ratio: Optional override for the aspect ratio (e.g., '1:1', '16:9'). Uses session default if None.
+        model: Optional override for the model (e.g., 'gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'). Uses session default if None.
         edit_mode: If editing an existing image, use 'inpainting' (default) to modify specific elements while keeping the rest exactly the same, or 'style_transfer' to generate a new image inspired by the old one's composition but with a completely new style or subject.
-        enable_search_grounding: If true, enables Grounding with Google Search (both Web and Image Search). Use this when the prompt asks for real-world entities, recent events, specific stock charts, real-time data, or highly accurate visual subjects that benefit from internet search context.
+        enable_search_grounding: If true, enables Grounding with Google Search (both Web and Image Search). Uses flash model automatically.
 
     Returns:
         A dictionary containing the generated image's artifact name.
@@ -1261,20 +1261,40 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             }
             
 
+        effective_resolution = resolution or tool_context.state.get("default_image_resolution", "0.5k")
+        effective_ratio = aspect_ratio or tool_context.state.get("default_image_ratio", "1:1")
+        effective_model = model or tool_context.state.get("default_image_model", "gemini-3.1-flash-lite-image")
+
+        if enable_search_grounding:
+            # Force flash for grounding support
+            effective_model = "gemini-3.1-flash-image"
+
+        # Lite model only supports 1K resolution
+        if effective_model == "gemini-3.1-flash-lite-image":
+            effective_resolution = "1k"
+
         # Map resolution to the model's native image_size string
         api_image_size = "512"
-        if resolution.lower().strip() == "1k":
+        res_lower = effective_resolution.lower().strip()
+        if res_lower == "1k":
             api_image_size = "1K"
+        elif res_lower == "2k":
+            api_image_size = "2K"
+        elif res_lower == "4k":
+            api_image_size = "4K"
 
-        tool_context.state["latest_resolution"] = resolution
+        tool_context.state["latest_resolution"] = effective_resolution
 
         response_format = {
             "type": "image",
-            "image_size": api_image_size
+            "image_size": api_image_size,
         }
 
+        # Some models handle aspect_ratio in response_format, else we fallback to appending to prompt
+        response_format["aspect_ratio"] = effective_ratio
+
         kwargs = {
-            "model": "gemini-3.1-flash-image",
+            "model": effective_model,
             "input": input_data,
             "response_format": response_format,
         }
@@ -1285,6 +1305,16 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
                 "search_types": ["web_search", "image_search"]
             }]
             debug_info["grounding_enabled"] = True
+
+        # Save actual execution info for embed
+        tool_context.state["last_image_settings"] = {
+            "model": effective_model,
+            "resolution": effective_resolution,
+            "aspect_ratio": effective_ratio,
+            "grounding_enabled": enable_search_grounding,
+            "has_image": debug_info.get("has_image", False),
+            "prompt": final_prompt if "final_prompt" in locals() else prompt
+        }
 
         import json
         debug_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_payload.json")
@@ -1324,6 +1354,29 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
     except Exception as e:
         return {"status": "error", "message": f"Error generating image: {e}"}
 
+async def show_image_settings(tool_context: ToolContext) -> dict:
+    """Sets a flag to display the user's current image generation settings via a Discord embed.
+    Call this tool when the user asks to see their current image settings or defaults.
+    """
+    tool_context.state["show_image_settings_embed"] = True
+    return {"status": "success", "message": "Image settings embed staged for display."}
+
+async def set_image_defaults(tool_context: ToolContext, model: str = None, resolution: str = None, aspect_ratio: str = None) -> dict:
+    """Sets the persistent default values for image generation in the current session.
+    These defaults will automatically be applied to subsequent 'generate_image' calls.
+    Args:
+        model: Model code (e.g., 'gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image')
+        resolution: Resolution (e.g., '0.5k', '1k')
+        aspect_ratio: Aspect ratio (e.g., '1:1', '16:9')
+    """
+    if model:
+        tool_context.state["default_image_model"] = model
+    if resolution:
+        tool_context.state["default_image_resolution"] = resolution
+    if aspect_ratio:
+        tool_context.state["default_image_ratio"] = aspect_ratio
+    
+    return {"status": "success", "message": "Image defaults updated."}
 
 # ---------------------------------------------------------------------------
 # Art Director Helpers

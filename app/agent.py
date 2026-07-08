@@ -39,6 +39,8 @@ from app.tools import (
     get_trending_tracks,
     roll_artistic_inspiration,
     search_lastfm,
+    show_image_settings,
+    set_image_defaults,
 )
 from app.radio_tools import (
     add_to_queue,
@@ -200,6 +202,8 @@ art_director = Agent(
         generate_image,
         roll_artistic_inspiration,
         get_art_director_settings,
+        show_image_settings,
+        set_image_defaults,
         custom_google_search,
         *_user_tools,
     ],

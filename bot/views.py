@@ -47,6 +47,118 @@ def create_user_profile_embed(user_prefs: dict) -> discord.Embed:
     return embed
 
 
+# ---------------------------------------------------------------------------
+# Image Settings View
+# ---------------------------------------------------------------------------
+
+class ImageSettingsView(discord.ui.View):
+    def __init__(self, session_state: dict, update_state_fn, user_id: str, session_id: str):
+        super().__init__(timeout=None)
+        self.session_state = session_state
+        self.update_state_fn = update_state_fn
+        self.user_id = user_id
+        self.session_id = session_id
+        
+        # Determine defaults
+        current_model = self.session_state.get("default_image_model", "gemini-3.1-flash-lite-image")
+        current_res = self.session_state.get("default_image_resolution", "0.5k")
+        current_ratio = self.session_state.get("default_image_ratio", "1:1")
+
+        # Set default values for dropdowns
+        for opt in self.model_select.options:
+            if opt.value == current_model: opt.default = True
+        for opt in self.resolution_select.options:
+            if opt.value == current_res: opt.default = True
+        for opt in self.ratio_select.options:
+            if opt.value == current_ratio: opt.default = True
+
+    async def _update_and_refresh(self, interaction: discord.Interaction):
+        await self.update_state_fn(self.user_id, self.session_id, self.session_state)
+        embed, view = create_image_settings_view(self.session_state, self.user_id, self.session_id, self.update_state_fn)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.select(
+        placeholder="Select Model",
+        options=[
+            discord.SelectOption(label="Lite (Fast)", value="gemini-3.1-flash-lite-image", description="gemini-3.1-flash-lite-image"),
+            discord.SelectOption(label="Flash (Grounding)", value="gemini-3.1-flash-image", description="gemini-3.1-flash-image"),
+            discord.SelectOption(label="Pro (High Quality)", value="gemini-3-pro-image", description="gemini-3-pro-image"),
+        ]
+    )
+    async def model_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.session_state["default_image_model"] = select.values[0]
+        await self._update_and_refresh(interaction)
+
+    @discord.ui.select(
+        placeholder="Select Resolution",
+        options=[
+            discord.SelectOption(label="0.5k (512x512)", value="0.5k"),
+            discord.SelectOption(label="1k (1024x1024)", value="1k"),
+            discord.SelectOption(label="2k (2048x2048)", value="2k"),
+            discord.SelectOption(label="4k (4096x4096)", value="4k"),
+        ]
+    )
+    async def resolution_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.session_state["default_image_resolution"] = select.values[0]
+        await self._update_and_refresh(interaction)
+
+    @discord.ui.select(
+        placeholder="Select Aspect Ratio",
+        options=[
+            discord.SelectOption(label="1:1 (Square)", value="1:1"),
+            discord.SelectOption(label="16:9 (Widescreen)", value="16:9"),
+            discord.SelectOption(label="9:16 (Vertical)", value="9:16"),
+            discord.SelectOption(label="4:3 (Standard)", value="4:3"),
+            discord.SelectOption(label="3:4 (Portrait)", value="3:4"),
+            discord.SelectOption(label="3:2", value="3:2"),
+            discord.SelectOption(label="2:3", value="2:3"),
+            discord.SelectOption(label="4:5", value="4:5"),
+            discord.SelectOption(label="5:4", value="5:4"),
+            discord.SelectOption(label="21:9 (Ultrawide)", value="21:9"),
+        ]
+    )
+    async def ratio_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.session_state["default_image_ratio"] = select.values[0]
+        await self._update_and_refresh(interaction)
+
+def create_image_settings_view(session_state: dict, user_id: str, session_id: str, update_state_fn) -> tuple[discord.Embed, discord.ui.View]:
+    embed = discord.Embed(
+        title="🎨 Image Generation Settings",
+        description="Configure defaults for image generation. These settings will expire when the session is cleansed or goes idle for 4 hours.",
+        color=discord.Color.purple()
+    )
+    
+    current_model = session_state.get("default_image_model", "gemini-3.1-flash-lite-image")
+    current_res = session_state.get("default_image_resolution", "0.5k")
+    current_ratio = session_state.get("default_image_ratio", "1:1")
+    
+    embed.add_field(name="Current Defaults", value=f"**Model:** `{current_model}`\n**Resolution:** `{current_res}`\n**Aspect Ratio:** `{current_ratio}`", inline=False)
+    
+    last_settings = session_state.get("last_image_settings")
+    if last_settings:
+        model = last_settings.get("model", "N/A")
+        res = last_settings.get("resolution", "N/A")
+        ratio = last_settings.get("aspect_ratio", "N/A")
+        grounded = "Yes" if last_settings.get("grounding_enabled") else "No"
+        ref_image = "Yes" if last_settings.get("has_image") else "No"
+        prompt = last_settings.get("prompt", "N/A")
+        
+        last_str = (
+            f"**Model:** `{model}`\n"
+            f"**Resolution:** `{res}`\n"
+            f"**Aspect Ratio:** `{ratio}`\n"
+            f"**Search Grounding:** {grounded}\n"
+            f"**Reference Image Used:** {ref_image}\n"
+            f"**Prompt Used:**\n> {prompt}"
+        )
+        embed.add_field(name="Last Generation Details", value=last_str, inline=False)
+    else:
+        embed.add_field(name="Last Generation Details", value="*No images generated yet in this session.*", inline=False)
+        
+    view = ImageSettingsView(session_state, update_state_fn, user_id, session_id)
+    return embed, view
+
+
 
 # ---------------------------------------------------------------------------
 # Shared helper: run agent and extract image artifact

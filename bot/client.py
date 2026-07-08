@@ -425,6 +425,13 @@ async def execute_agent_turn(
         from bot.views import create_user_profile_embed
         embed = create_user_profile_embed(session.state.get("user_prefs", {}))
 
+    # Check for image settings embed flag
+    show_image_settings = session.state.get("show_image_settings_embed") if session else None
+    if show_image_settings:
+        await update_session_state(user_id, session_id, {"show_image_settings_embed": None})
+        from bot.views import create_image_settings_view
+        embed, view = create_image_settings_view(session.state, user_id, session_id, update_session_state)
+
     # Check for new artifacts (images, TTS)
     after_keys = set(
         await artifact_service.list_artifact_keys(
