@@ -232,6 +232,7 @@ general_assistant = Agent(
     description="A clean, helpful, and unbiased conversational assistant for general questions, chit-chat, Q&A, writing, and coding.",
     instruction=_load_prompt("general_assistant"),
     tools=[
+        custom_google_search,
         fetch_google_news,
         generate_tts,
         generate_tts_script,
