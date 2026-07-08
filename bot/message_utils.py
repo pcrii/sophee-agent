@@ -102,6 +102,36 @@ async def fetch_chunked_context(replied_message, time_threshold_seconds=5.0, max
     return "\n".join([c[2] for c in all_chunks if c[2]])
 
 
+async def fetch_conversation_context(replied_message, current_message, max_gap_seconds=2400.0, limit=50) -> str:
+    """Collects all messages from the channel between replied_message and current_message.
+    Stops if there's a time gap larger than max_gap_seconds (default 40 mins).
+    """
+    channel = replied_message.channel
+
+    messages = [replied_message]
+
+    try:
+        # Fetch messages after the replied message up to the current_message
+        async for msg in channel.history(limit=limit, after=replied_message, before=current_message, oldest_first=True):
+            prev_time = messages[-1].created_at
+            time_diff = abs((msg.created_at - prev_time).total_seconds())
+            if time_diff > max_gap_seconds:
+                # Large gap detected. Stop accumulating to avoid grabbing a different conversation.
+                break
+            messages.append(msg)
+            
+    except Exception as e:
+        logger.error("Error fetching conversation history: %s", e)
+
+    # Format transcript
+    transcript = []
+    for m in messages:
+        if m.content:
+            transcript.append(f"[{m.author.display_name}]: {m.content}")
+
+    return "\n".join(transcript)
+
+
 async def read_image_attachment(attachment) -> dict | None:
     """Reads a Discord image attachment and returns base64-encoded data with mime type."""
     if not (attachment.content_type and attachment.content_type.startswith("image/")):

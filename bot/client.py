@@ -24,6 +24,7 @@ from bot.history import trim_session_history
 from bot.message_utils import (
     bracket_urls,
     fetch_chunked_context,
+    fetch_conversation_context,
     read_image_attachment,
     send_message_in_chunks,
 )
@@ -283,9 +284,21 @@ async def execute_agent_turn(
     # Handle reply context reconstruction (both bot and user messages)
     if message_reference and message_reference.reference and message_reference.reference.resolved and not is_image_reply:
         replied_msg = message_reference.reference.resolved
-        chunked_context = await fetch_chunked_context(replied_msg)
-        if chunked_context:
-            msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
+        
+        # Check if user wants the whole conversation starting from the reply
+        prompt_lower = msg_text.lower()
+        conv_keywords = ["this conversation", "this context", "the conversation", "these messages", "read above", "full context"]
+        
+        if any(kw in prompt_lower for kw in conv_keywords):
+            # Fetch full conversation up to current message
+            conv_context = await fetch_conversation_context(replied_msg, current_message=None)
+            if conv_context:
+                msg_text = f"[The user wants you to read the conversation starting from this message:\n---\n{conv_context}\n---\n]\n\n{msg_text}"
+        else:
+            # Default behavior: grab just the chunks of the single replied message
+            chunked_context = await fetch_chunked_context(replied_msg)
+            if chunked_context:
+                msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
 
     # Inject adventure state if active
     is_adv_active = session and session.state.get("adventure_active")
