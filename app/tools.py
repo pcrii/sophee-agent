@@ -827,7 +827,7 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
     ytm_candidate_tracks = []
     candidate_pool_seeds = []
 
-    if not explicit_tracks:
+    if not explicit_tracks and mode != "strict_thesis":
         try:
             brainstorm_prompt = f"""You are an expert music curator. The user requested a playlist based on: '{playlist_thesis}'.
 Identify exactly 3 definitive, highly-canonical tracks that perfectly capture this exact vibe or genre. Avoid picking multiple tracks from the same artist.
