@@ -820,32 +820,50 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
 
     # --- YTM Pre-research: fetch real tracks before asking the LLM ---
     from app.ytmusic_tools import search_ytmusic_track as _ytm_search, generate_ytmusic_radio as _ytm_radio
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    client = genai.Client(api_key=api_key)
+    model_id = "gemini-3.1-flash-lite"
 
     ytm_candidate_tracks = []
     candidate_pool_seeds = []
 
     if not explicit_tracks:
         try:
-            ytm_result = await _ytm_search(playlist_thesis)
-            if ytm_result.get("status") == "success" and ytm_result.get("videoId"):
-                radio_result = await _ytm_radio(ytm_result["videoId"])
-                if radio_result.get("status") == "success":
-                    for track in radio_result.get("tracks", [])[:20]:
-                        artists = track.get("artists", [])
-                        ytm_candidate_tracks.append({
-                            "artist": artists[0] if artists else "Unknown",
-                            "title": track.get("title", ""),
-                            "videoId": track.get("videoId", ""),
-                        })
+            brainstorm_prompt = f"""You are an expert music curator. The user requested a playlist based on: '{playlist_thesis}'.
+Identify exactly 3 definitive, highly-canonical tracks that perfectly capture this exact vibe or genre. Avoid picking multiple tracks from the same artist.
+Output STRICTLY a JSON object in this format:
+{{
+    "brainstormed_tracks": [
+        {{"artist": "Artist 1", "title": "Track 1"}},
+        {{"artist": "Artist 2", "title": "Track 2"}},
+        {{"artist": "Artist 3", "title": "Track 3"}}
+    ]
+}}
+"""
+            brainstorm_res = await client.aio.models.generate_content(
+                model=model_id,
+                contents=[types.Content(role="user", parts=[types.Part.from_text(text=brainstorm_prompt)])]
+            )
+            brainstorm_data = _extract_json(brainstorm_res.text)
+            
+            for t in brainstorm_data.get("brainstormed_tracks", [])[:3]:
+                ytm_result = await _ytm_search(f"{t.get('artist', '')} {t.get('title', '')}")
+                if ytm_result.get("status") == "success" and ytm_result.get("videoId"):
+                    radio_result = await _ytm_radio(ytm_result["videoId"])
+                    if radio_result.get("status") == "success":
+                        for track in radio_result.get("tracks", [])[:15]:
+                            artists = track.get("artists", [])
+                            ytm_candidate_tracks.append({
+                                "artist": artists[0] if artists else "Unknown",
+                                "title": track.get("title", ""),
+                                "videoId": track.get("videoId", ""),
+                            })
+                            
             logger.info("YTM pre-research yielded %d candidates for '%s'", len(ytm_candidate_tracks), playlist_thesis)
         except Exception as e:
             logger.warning("YTM pre-research failed, falling back to LLM-only: %s", e)
 
     # --- Build LLM prompt ---
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    client = genai.Client(api_key=api_key)
-    model_id = "gemini-3.1-flash-lite"
-
     data = {}
 
     try:
@@ -888,7 +906,7 @@ Here are {len(ytm_candidate_tracks)} real, playable tracks from YouTube Music:
 {candidates_str}
 
 Your tasks:
-1. Select exactly 4 track numbers (0-indexed) from the list above to open the station. Prioritise variety — avoid picking multiple tracks by the same artist unless the request is specifically for that artist.
+1. Select exactly 12 track numbers (0-indexed) from the list above to open the station. Prioritise variety — avoid picking multiple tracks by the same artist unless the request is specifically for that artist.
 2. If the request is artist-specific (e.g. "2Slimey station", "Radiohead radio"), you MUST include at least 1-2 tracks by that artist in your selection.
 3. Generate 3-5 specific Last.fm genre/style tags that capture the sonic vibe, each with a weight (0.1-1.0). Most central tag = 1.0.
 
@@ -897,7 +915,7 @@ CRITICAL: Only use indices from the list above. Do NOT invent tracks.
 OUTPUT FORMAT (JSON only, no markdown):
 {{
   "seed_tags": [{{"tag": "tag1", "weight": 1.0}}, {{"tag": "tag2", "weight": 0.6}}],
-  "selected_indices": [2, 7, 0, 14]
+  "selected_indices": [2, 7, 0, 14, 5, 8, 1, 10, 12, 19, 3, 11]
 }}"""
             response = await client.aio.models.generate_content(
                 model=model_id,
@@ -917,14 +935,14 @@ OUTPUT FORMAT (JSON only, no markdown):
                         final_tracks.append(t)
                         seen_ids.add(vid)
 
-            # Fill to 4 if LLM gave bad/too-few indices
-            if len(final_tracks) < 4:
+            # Fill to 12 if LLM gave bad/too-few indices
+            if len(final_tracks) < 12:
                 for t in ytm_candidate_tracks:
-                    if t.get("videoId") not in seen_ids and len(final_tracks) < 4:
+                    if t.get("videoId") not in seen_ids and len(final_tracks) < 12:
                         final_tracks.append(t)
                         seen_ids.add(t.get("videoId"))
 
-            final_tracks = final_tracks[:4]
+            final_tracks = final_tracks[:12]
 
             # Remaining YTM candidates pre-seed the JIT candidate pool
             selected_ids = {t.get("videoId") for t in final_tracks}
@@ -936,7 +954,7 @@ OUTPUT FORMAT (JSON only, no markdown):
             prompt = f"""You are a music nerd acting as an internet radio DJ.
 TASK:
 1. The user has requested a radio station based on the following theme/thesis: '{playlist_thesis}' with mode: '{mode}'.
-2. Dig into your vast musical knowledge and select exactly 4 songs that create a cohesive listening experience for this theme. Feel free to include deep cuts and obscure tracks!
+2. Dig into your vast musical knowledge and select exactly 12 songs that create a cohesive listening experience for this theme. Feel free to include deep cuts and obscure tracks!
 3. Generate a list of exactly 3-5 relevant, specific Last.fm genre/style tags that describe the sonic vibe of this theme. For each tag, assign a weight (a float between 0.1 and 1.0) indicating how strongly it should influence the station's music. The most central tag should have a weight of 1.0.
 
 STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
@@ -949,7 +967,15 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
     {{"artist": "Artist1", "title": "Title1"}},
     {{"artist": "Artist2", "title": "Title2"}},
     {{"artist": "Artist3", "title": "Title3"}},
-    {{"artist": "Artist4", "title": "Title4"}}
+    {{"artist": "Artist4", "title": "Title4"}},
+    {{"artist": "Artist5", "title": "Title5"}},
+    {{"artist": "Artist6", "title": "Title6"}},
+    {{"artist": "Artist7", "title": "Title7"}},
+    {{"artist": "Artist8", "title": "Title8"}},
+    {{"artist": "Artist9", "title": "Title9"}},
+    {{"artist": "Artist10", "title": "Title10"}},
+    {{"artist": "Artist11", "title": "Title11"}},
+    {{"artist": "Artist12", "title": "Title12"}}
   ]
 }}"""
             contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
@@ -973,9 +999,9 @@ STRICT OUTPUT FORMAT (JSON ONLY, no markdown formatting):
                 for track in valid:
                     if not is_duplicate(track, all_valid_tracks):
                         all_valid_tracks.append(track)
-                if len(all_valid_tracks) >= 4:
+                if len(all_valid_tracks) >= 12:
                     break
-                needed = 4 - len(all_valid_tracks)
+                needed = 12 - len(all_valid_tracks)
                 retries += 1
                 logger.info("Station curation fallback: %d valid, need %d more (retry %d/3)", len(all_valid_tracks), needed, retries)
                 already_chosen_str = "\n".join([f"- {t.get('artist')} - {t.get('title')}" for t in all_valid_tracks])
@@ -1005,7 +1031,7 @@ Use the same JSON array format."""
                         unique_new.append(track)
                 current_tracks = unique_new
 
-            final_tracks = all_valid_tracks[:4]
+            final_tracks = all_valid_tracks[:12]
 
         # Stage in session state for the Discord embed to pick up
         tool_context.state["staged_station_tracks"] = final_tracks
