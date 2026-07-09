@@ -675,6 +675,16 @@ class ImageView(discord.ui.View):
         self.session_service = session_service
         self.update_state_fn = update_state_fn
 
+    async def _get_main_defaults(self) -> dict:
+        main_session = await self.session_service.get_session("app", self.user_id, self.session_id)
+        if main_session and main_session.state:
+            return {
+                "default_image_ratio": main_session.state.get("default_image_ratio", "1:1"),
+                "default_image_resolution": main_session.state.get("default_image_resolution", "0.5k"),
+                "default_image_model": main_session.state.get("default_image_model", "gemini-3.1-flash-lite-image"),
+            }
+        return {}
+
     @discord.ui.button(label="Reroll", style=discord.ButtonStyle.secondary, emoji="\U0001f501")
     async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(thinking=True)
@@ -684,25 +694,31 @@ class ImageView(discord.ui.View):
 
             original_prompt = ""
             active_session_id = self.session_id
+            main_defaults = await self._get_main_defaults()
+            
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
                 if ref_meta.get("session_id"):
                     active_session_id = ref_meta.get("session_id")
-                await self.update_state_fn(self.user_id, active_session_id, {
+                state_update = {
                     "rolled_style": ref_meta.get("style"),
                     "latest_resolution": ref_meta.get("resolution"),
                     "force_style_roll": False,
                     "start_fresh_image": True,
                     "latest_input_image": None,
                     "latest_input_image_artifact": None,
-                })
+                }
+                state_update.update(main_defaults)
+                await self.update_state_fn(self.user_id, active_session_id, state_update)
             else:
-                await self.update_state_fn(self.user_id, active_session_id, {
+                state_update = {
                     "force_style_roll": False,
                     "start_fresh_image": True,
                     "latest_input_image": None,
                     "latest_input_image_artifact": None,
-                })
+                }
+                state_update.update(main_defaults)
+                await self.update_state_fn(self.user_id, active_session_id, state_update)
 
             if original_prompt:
                 run_prompt = f"Start fresh and generate a brand new image using the exact same prompt description: '{original_prompt}'. Do not roll a new style; reuse the existing rolled_style if it was active."
@@ -753,10 +769,15 @@ class ImageView(discord.ui.View):
             
             original_prompt = ""
             active_session_id = self.session_id
+            main_defaults = await self._get_main_defaults()
+            
             if ref_meta:
                 original_prompt = ref_meta.get("prompt", "")
                 if ref_meta.get("session_id"):
                     active_session_id = ref_meta.get("session_id")
+            
+            if main_defaults:
+                await self.update_state_fn(self.user_id, active_session_id, main_defaults)
                     
             if not original_prompt:
                 original_prompt = "restyled image"
