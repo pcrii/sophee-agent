@@ -981,11 +981,91 @@ class RadioView(discord.ui.View):
 # ---------------------------------------------------------------------------
 
 class SkipView(discord.ui.View):
-    def __init__(self, vc, queue, abort_event):
+    def __init__(self, vc, queue, abort_event, state=None):
         super().__init__(timeout=None)
         self.vc = vc
         self.queue = queue
         self.abort_event = abort_event
+        self.state = state
+        self._add_queue_dropdowns()
+
+    def _add_queue_dropdowns(self):
+        if not self.state: return
+        entries = self.state.get("display_queue", []) + self.state.get("upcoming_tracks", [])
+        visible = entries[:25]
+        if not visible: return
+
+        # "Remove Track" Dropdown
+        remove_options = [
+            discord.SelectOption(
+                label=f"{i+1}. {t.get('title')[:80]}",
+                description=t.get("artist")[:100],
+                value=str(i)
+            ) for i, t in enumerate(visible)
+        ]
+        
+        self.remove_select = discord.ui.Select(
+            placeholder="❌ Remove Track...",
+            options=remove_options,
+            row=2,
+            custom_id="remove_track_select"
+        )
+        self.remove_select.callback = self.remove_track_callback
+        self.add_item(self.remove_select)
+
+        # "Bump to Next" Dropdown
+        bump_options = [
+            discord.SelectOption(
+                label=f"{i+1}. {t.get('title')[:80]}",
+                description=t.get("artist")[:100],
+                value=str(i)
+            ) for i, t in enumerate(visible)
+        ]
+        self.bump_select = discord.ui.Select(
+            placeholder="⬆️ Play Next...",
+            options=bump_options,
+            row=3,
+            custom_id="bump_track_select"
+        )
+        self.bump_select.callback = self.bump_track_callback
+        self.add_item(self.bump_select)
+
+    async def remove_track_callback(self, interaction: discord.Interaction):
+        await self._ack(interaction)
+        idx = int(self.remove_select.values[0])
+        dq_len = len(self.state.get("display_queue", []))
+        if idx < dq_len:
+            await self._reply(interaction, "Cannot remove this track; it is already loading or buffered.")
+            return
+            
+        removed = self.state.get("upcoming_tracks", []).pop(idx - dq_len)
+        await self._reply(interaction, f"Removed **{removed.get('title')}** from the queue.")
+        
+        from bot.audio import _render_queue_card
+        content = _render_queue_card(self.state)
+        if hasattr(self, 'remove_select'): self.remove_item(self.remove_select)
+        if hasattr(self, 'bump_select'): self.remove_item(self.bump_select)
+        self._add_queue_dropdowns()
+        await interaction.message.edit(content=content, view=self)
+
+    async def bump_track_callback(self, interaction: discord.Interaction):
+        await self._ack(interaction)
+        idx = int(self.bump_select.values[0])
+        dq_len = len(self.state.get("display_queue", []))
+        if idx < dq_len:
+            await self._reply(interaction, "This track is already loading or playing next.")
+            return
+            
+        bumped = self.state.get("upcoming_tracks", []).pop(idx - dq_len)
+        self.state.get("upcoming_tracks", []).insert(0, bumped)
+        await self._reply(interaction, f"Bumped **{bumped.get('title')}** to play next.")
+        
+        from bot.audio import _render_queue_card
+        content = _render_queue_card(self.state)
+        if hasattr(self, 'remove_select'): self.remove_item(self.remove_select)
+        if hasattr(self, 'bump_select'): self.remove_item(self.bump_select)
+        self._add_queue_dropdowns()
+        await interaction.message.edit(content=content, view=self)
 
     async def _ack(self, interaction):
         try:

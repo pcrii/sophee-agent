@@ -575,33 +575,34 @@ async def audio_player_task(vc, queue, channel, abort_event):
                     report = ""
 
                 if file_path and os.path.exists(file_path):
-                    # Delete previous now-playing message if one exists
                     if hasattr(channel, "guild") and channel.guild:
                         state = active_radios.get(channel.guild.id)
                         if state:
-                            old_msg_id = state.pop("now_playing_message_id", None)
+                            state["current_track_label"] = label
+                            
+                            # Delete the old unified message
+                            old_msg_id = state.pop("queue_display_message_id", None)
                             if old_msg_id:
                                 try:
                                     old_msg = await channel.fetch_message(old_msg_id)
                                     await old_msg.delete()
                                 except Exception:
                                     pass
-
-                    sent_msg = await channel.send(
-                        f"\U0001f4fb Now Playing: **{label}**",
-                        view=SkipView(vc, queue, abort_event),
-                    )
-
-                    # Store new message ID for deletion next song
-                    if hasattr(channel, "guild") and channel.guild:
-                        state = active_radios.get(channel.guild.id)
-                        if state:
-                            state["now_playing_message_id"] = sent_msg.id
+                                    
                             # Pop from display_queue now that this song is actually playing
                             if state.get("display_queue"):
                                 state["display_queue"].pop(0)
-                            # Update the live queue card now that a new song is actually playing
-                            asyncio.create_task(_update_queue_card(state, channel))
+                                
+                            # Send the new unified player message
+                            content = _render_queue_card(state)
+                            view = SkipView(vc, queue, abort_event, state)
+                            state["current_view"] = view
+                            
+                            sent_msg = await channel.send(
+                                content,
+                                view=view,
+                            )
+                            state["queue_display_message_id"] = sent_msg.id
 
                     if report:
                         try:
@@ -961,12 +962,15 @@ async def jit_replenish_queue(state, channel=None):
 
 
 def _render_queue_card(state: dict) -> str:
-    """Renders the live queue card combining downloaded buffer + upcoming-to-download."""
-    # display_queue: downloaded & in playback buffer (mutually exclusive with upcoming_tracks)
-    # upcoming_tracks: JIT-buffered, queued for download next
+    """Renders the live queue card combining Now Playing + upcoming-to-download."""
+    current_label = state.get("current_track_label", "Unknown Track")
     entries = state.get("display_queue", []) + state.get("upcoming_tracks", [])
+    
+    header = f"📻 Now Playing: **{current_label}**\n\n"
+    
     if not entries:
-        return "🎵 **Upcoming Queue** — empty"
+        return header + "🎵 **Upcoming Queue** — empty"
+        
     visible = entries[:25]
     overflow = len(entries) - len(visible)
     lines = [
@@ -975,16 +979,17 @@ def _render_queue_card(state: dict) -> str:
     ]
     if overflow > 0:
         lines.append(f"*...and {overflow} more*")
-    return "🎵 **Upcoming Queue**\n" + "\n".join(lines)
+    return header + "🎵 **Upcoming Queue**\n" + "\n".join(lines)
 
 
 
 
 async def _update_queue_card(state: dict, channel) -> None:
-    """Edits the live queue card in-place. Posts a new one if the old was deleted or missing."""
+    """Edits the live queue card in-place to reflect new incoming tracks."""
     content = _render_queue_card(state)
     entries = state.get("display_queue") or state.get("upcoming_tracks", [])
     msg_id = state.get("queue_display_message_id")
+    
     # Delete card if queue is empty
     if not entries:
         if msg_id:
@@ -995,13 +1000,28 @@ async def _update_queue_card(state: dict, channel) -> None:
                 pass
             state.pop("queue_display_message_id", None)
         return
+        
     if msg_id:
         try:
             msg = await channel.fetch_message(msg_id)
-            await msg.edit(content=content)
+            from bot.views import SkipView
+            
+            # Since the queue changed, we should rebuild the view's dropdowns
+            # Wait, we need `vc`, `queue`, `abort_event` for a full rebuild. 
+            # If we don't have them here, Discord's View state might break if we just send `view=SkipView()`.
+            # To fix this, SkipView should be cached on `state` when first created in `audio_player_task`.
+            current_view = state.get("current_view")
+            if current_view:
+                if hasattr(current_view, 'remove_select'): current_view.remove_item(current_view.remove_select)
+                if hasattr(current_view, 'bump_select'): current_view.remove_item(current_view.bump_select)
+                current_view._add_queue_dropdowns()
+                await msg.edit(content=content, view=current_view)
+            else:
+                await msg.edit(content=content)
             return
         except Exception:
             state.pop("queue_display_message_id", None)
+            
     # No live card — send a new one
     try:
         sent = await channel.send(content)
