@@ -966,10 +966,10 @@ def _render_queue_card(state: dict) -> str:
     current_label = state.get("current_track_label", "Unknown Track")
     entries = state.get("display_queue", []) + state.get("upcoming_tracks", [])
     
-    header = f"📻 Now Playing: **{current_label}**\n\n"
+    footer = f"\n\n📻 **Now Playing:**\n{current_label}"
     
     if not entries:
-        return header + "🎵 **Upcoming Queue** — empty"
+        return "🎵 **Upcoming Queue** — empty" + footer
         
     visible = entries[:25]
     overflow = len(entries) - len(visible)
@@ -979,7 +979,8 @@ def _render_queue_card(state: dict) -> str:
     ]
     if overflow > 0:
         lines.append(f"*...and {overflow} more*")
-    return header + "🎵 **Upcoming Queue**\n" + "\n".join(lines)
+        
+    return "🎵 **Upcoming Queue**\n" + "\n".join(lines) + footer
 
 
 
