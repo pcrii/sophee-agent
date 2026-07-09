@@ -817,6 +817,12 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
             "mode": hibernated_state.get("mode"),
             "upcoming_tracks": [{"artist": t.get("artist"), "title": t.get("title")} for t in hibernated_state.get("upcoming_tracks", [])[:4]],
         }
+    # --- Load Pre-configured Settings ---
+    from app.radio_state import active_radios
+    existing_state = active_radios.get(guild_id, {})
+    if "mode" in existing_state:
+        mode = existing_state["mode"]
+    jit_enabled = existing_state.get("jit_enabled", True)
 
     # --- YTM Pre-research: fetch real tracks before asking the LLM ---
     from app.ytmusic_tools import search_ytmusic_track as _ytm_search, generate_ytmusic_radio as _ytm_radio

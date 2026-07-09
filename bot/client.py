@@ -59,6 +59,19 @@ client = discord.Client(intents=intents)
 # ADK services
 # ---------------------------------------------------------------------------
 
+tree = discord.app_commands.CommandTree(client)
+
+@tree.command(name="radio_settings", description="Configure radio playback settings")
+async def cmd_radio_settings(interaction: discord.Interaction):
+    from bot.views import RadioSettingsView
+    # Ensure a settings stub exists if no radio is active
+    from app.radio_state import active_radios
+    if interaction.guild.id not in active_radios:
+        active_radios[interaction.guild.id] = {"active": False, "mode": "standard", "jit_enabled": True}
+        
+    view = RadioSettingsView(interaction.guild.id)
+    await interaction.response.send_message("⚙️ **Radio Settings**", view=view, ephemeral=True)
+
 session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 artifacts_dir = os.path.join(project_root, "data", "artifacts")
@@ -132,6 +145,12 @@ async def on_ready():
     set_discord_client(client)
     logger.info("Sophee is online as %s (ID: %s)", client.user, client.user.id)
     logger.info("Connected to %d guilds", len(client.guilds))
+    
+    try:
+        synced = await tree.sync()
+        logger.info(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        logger.error(f"Failed to sync commands: {e}")
 
     # Run image cache janitor task
     from bot.cache import cleanup_image_metadata

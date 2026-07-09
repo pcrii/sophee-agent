@@ -933,7 +933,11 @@ class RadioView(discord.ui.View):
         )
 
         # Populate the shared radio state
+        from app.radio_state import active_radios
+        existing_state = active_radios.get(guild_id, {})
+        
         state_dict = {
+            **existing_state, # Preserve manually configured settings like jit_enabled and mode
             "active": True,
             "playlist_thesis": self.playlist_data.get("playlist_thesis", "music"),
             "genre": self.playlist_data.get("playlist_thesis", "music"),
@@ -942,7 +946,6 @@ class RadioView(discord.ui.View):
             "current_track": None,
             "liked_tracks": [],
             "disliked_tracks": [],
-            "mode": self.playlist_data.get("mode", "standard"),
             "seed_tags": self.playlist_data.get("seed_tags", []),
             "user_id": self.user_id,
             "voice_channel_id": voice_channel.id,
