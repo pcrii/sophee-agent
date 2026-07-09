@@ -676,7 +676,7 @@ class ImageView(discord.ui.View):
         self.update_state_fn = update_state_fn
 
     async def _get_main_defaults(self) -> dict:
-        main_session = await self.session_service.get_session("app", self.user_id, self.session_id)
+        main_session = await self.session_service.get_session(app_name="app", user_id=self.user_id, session_id=self.session_id)
         if main_session and main_session.state:
             return {
                 "default_image_ratio": main_session.state.get("default_image_ratio", "1:1"),
