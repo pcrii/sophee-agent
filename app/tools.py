@@ -1341,7 +1341,8 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             part = types.Part(
                 inline_data=types.Blob(mime_type="image/jpeg", data=image_bytes)
             )
-            artifact_name = f"user:generated_image_{hashlib.md5(prompt.encode()).hexdigest()[:8]}.jpeg"
+            import time
+            artifact_name = f"user:generated_image_{hashlib.md5(prompt.encode()).hexdigest()[:8]}_{int(time.time())}.jpeg"
             await tool_context.save_artifact(artifact_name, part)
 
             return {
