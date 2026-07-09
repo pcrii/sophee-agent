@@ -1021,14 +1021,9 @@ async def _update_queue_card(state: dict, channel) -> None:
                 await msg.edit(content=content)
             return
         except Exception:
-            state.pop("queue_display_message_id", None)
-            
-    # No live card — send a new one
-    try:
-        sent = await channel.send(content)
-        state["queue_display_message_id"] = sent.id
-    except Exception as e:
-        logger.warning("Failed to send queue card: %s", e)
+            # If the fetch fails, the message was likely deleted (e.g. by audio_player_task transitioning).
+            # We do not send a new card here. audio_player_task handles new card creation.
+            pass
 
 
 # ---------------------------------------------------------------------------
