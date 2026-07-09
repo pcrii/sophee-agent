@@ -970,7 +970,7 @@ def _render_queue_card(state: dict) -> str:
     visible = entries[:25]
     overflow = len(entries) - len(visible)
     lines = [
-        f"{'▶️' if i == 0 else f'{i+1}.'} **{t.get('artist')}** - *{t.get('title')}*"
+        f"{i+1}. **{t.get('artist')}** - *{t.get('title')}*"
         for i, t in enumerate(visible)
     ]
     if overflow > 0:
