@@ -463,6 +463,24 @@ async def execute_agent_turn(
         await update_session_state(user_id, session_id, {"show_image_settings_embed": None})
         from bot.views import create_image_settings_view
         embed, view = create_image_settings_view(session.state, user_id, session_id, update_session_state)
+        
+    # Check for radio settings embed flag
+    show_radio_settings = session.state.get("show_radio_settings_embed") if session else None
+    if show_radio_settings:
+        await update_session_state(user_id, session_id, {"show_radio_settings_embed": None})
+        from bot.views import RadioSettingsView
+        # We need the guild ID from the channel
+        guild_id = channel.guild.id if hasattr(channel, "guild") else None
+        if guild_id:
+            from app.radio_state import active_radios
+            if guild_id not in active_radios:
+                active_radios[guild_id] = {"active": False, "mode": "standard", "jit_enabled": True}
+            view = RadioSettingsView(guild_id)
+            embed = discord.Embed(
+                title="⚙️ Radio Settings", 
+                description="Configure how your radio station plays tracks and curates music.",
+                color=discord.Color.blurple()
+            )
 
     # Check for new artifacts (images, TTS)
     after_keys = set(

@@ -76,6 +76,62 @@ async def stop_station(tool_context: ToolContext) -> dict:
         "message": "Radio station stopped. You can start a new one anytime.",
     }
 
+
+async def configure_radio_settings(tool_context: ToolContext, mode: str = None, jit_enabled: bool = None) -> dict:
+    """Views or modifies the radio settings for the current server.
+    Use this when the user asks to change the radio mode (e.g. 'standard', 'ytm_native', 'strict_thesis'),
+    turn the JIT auto-generator on or off, or wants to check their current settings.
+
+    Args:
+        mode: Optional. The radio curation mode. Valid options are 'standard', 'ytm_native', or 'strict_thesis'.
+        jit_enabled: Optional. Whether the Just-In-Time (JIT) queue replenisher should automatically add songs.
+
+    Returns:
+        A dictionary containing the updated settings.
+    """
+    guild_id = _resolve_guild(tool_context)
+    
+    # Initialize state if it doesn't exist
+    if guild_id not in active_radios:
+        active_radios[guild_id] = {"active": False, "mode": "standard", "jit_enabled": True}
+        
+    state = active_radios[guild_id]
+    
+    updates_made = []
+    if mode is not None:
+        if mode in ["standard", "ytm_native", "strict_thesis"]:
+            state["mode"] = mode
+            updates_made.append(f"mode set to '{mode}'")
+        else:
+            return {"status": "error", "message": f"Invalid mode '{mode}'. Must be standard, ytm_native, or strict_thesis."}
+            
+    if jit_enabled is not None:
+        state["jit_enabled"] = jit_enabled
+        updates_made.append(f"JIT auto-gen set to {'ON' if jit_enabled else 'OFF'}")
+        
+    action_msg = "Updated settings: " + ", ".join(updates_made) if updates_made else "Current settings:"
+        
+    return {
+        "status": "success",
+        "message": action_msg,
+        "current_mode": state.get("mode", "standard"),
+        "jit_enabled": state.get("jit_enabled", True)
+    }
+
+async def open_radio_settings_menu(tool_context: ToolContext) -> dict:
+    """Opens the visual Radio Settings UI menu in Discord.
+    Use this when the user asks to see the radio settings menu, open the radio settings,
+    or wants the visual UI to configure radio preferences like JIT auto-gen and modes.
+
+    Returns:
+        A confirmation that the menu was opened.
+    """
+    tool_context.state["show_radio_settings_embed"] = True
+    return {
+        "status": "success",
+        "message": "Radio settings menu has been pushed to the user's screen."
+    }
+
 async def show_station_queue(tool_context: ToolContext) -> dict:
     """Shows the current radio station's queue — what's playing now and what's coming up.
     Use this when the user asks what's playing, what's next, what's in the queue, or wants to see the tracklist.

@@ -54,6 +54,8 @@ from app.radio_tools import (
     stop_station,
     toggle_radio_jit,
     hibernate_radio,
+    configure_radio_settings,
+    open_radio_settings_menu,
 )
 from app.user_tools import (
     clear_preferences,
@@ -181,6 +183,8 @@ dj_agent = Agent(
         hibernate_radio,
         resume_radio,
         toggle_radio_jit,
+        configure_radio_settings,
+        open_radio_settings_menu,
         # Last.fm primitives — agent can freestyle with these
         search_lastfm,
         get_artist_info,
