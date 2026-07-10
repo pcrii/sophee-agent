@@ -1388,11 +1388,11 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             logger.error("Error generating image via Interactions API: %s", e)
             return {"status": "error", "message": f"Error generating image: {e}"}
 
-        logger.warning("Attempting to pop state variables...")
-        tool_context.state.pop("rolled_style", None)
-        tool_context.state.pop("latest_input_image", None)
-        tool_context.state.pop("latest_input_image_artifact", None)
-        logger.warning("State variables popped successfully.")
+        logger.warning("Attempting to clear state variables...")
+        tool_context.state["rolled_style"] = None
+        tool_context.state["latest_input_image"] = None
+        tool_context.state["latest_input_image_artifact"] = None
+        logger.warning("State variables cleared successfully.")
 
         if image_bytes:
             logger.warning(f"Image bytes retrieved! Length: {len(image_bytes)}")
