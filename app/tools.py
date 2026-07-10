@@ -1232,7 +1232,7 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
     Args:
         prompt: The detailed description of the image to generate.
         resolution: Optional override for the resolution ('0.5k' or '1k'). DO NOT pass this parameter unless the user explicitly requests a specific resolution. Uses session default if None.
-        aspect_ratio: Optional override for the aspect ratio (e.g., '1:1', '16:9'). DO NOT pass this parameter unless the user explicitly requests a specific ratio. Uses session default if None.
+        aspect_ratio: Optional override for the aspect ratio (e.g., '1:1', '16:9'). The agent SHOULD intelligently select the best aspect ratio based on the requested subject (e.g., 'poster' implies 9:16). If the user adds shorthand like '--ar 16:9', extract it here. Uses session default if None.
         model: Optional override for the model. DO NOT pass this parameter unless the user explicitly requests a specific model. Uses session default if None.
         edit_mode: If editing an existing image, use 'inpainting' (default) to modify specific elements while keeping the rest exactly the same, or 'style_transfer' to generate a new image inspired by the old one's composition but with a completely new style or subject.
         enable_search_grounding: If true, enables Grounding with Google Search (both Web and Image Search). Uses flash model automatically.
