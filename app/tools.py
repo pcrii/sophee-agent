@@ -1342,10 +1342,12 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             "response_format": response_format,
         }
         
-        # Search grounding is not supported for the image model via interactions API
         if enable_search_grounding:
-            logger.warning("Search grounding requested but not supported for image model. Ignoring.")
-            debug_info["grounding_enabled"] = False
+            kwargs["tools"] = [{
+                "type": "google_search",
+                "search_types": ["web_search", "image_search"]
+            }]
+            debug_info["grounding_enabled"] = True
 
         # Save actual execution info for embed
         tool_context.state["last_image_settings"] = {
