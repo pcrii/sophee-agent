@@ -1370,6 +1370,14 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         try:
             interaction = await client.aio.interactions.create(**kwargs)
             
+            # Save output to debug json
+            debug_out_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_out.json")
+            try:
+                with open(debug_out_path, "w") as f:
+                    f.write(str(interaction))
+            except Exception:
+                pass
+
             # The interactions API exposes the output image cleanly on interaction.output_image
             generated_image = interaction.output_image
             image_bytes = None
@@ -1380,8 +1388,10 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             logger.error("Error generating image via Interactions API: %s", e)
             return {"status": "error", "message": f"Error generating image: {e}"}
 
-        # Clear the rolled style so it doesn't stick to future unrelated prompts
+        # Clear the rolled style and input image so they don't stick to future unrelated prompts
         tool_context.state.pop("rolled_style", None)
+        tool_context.state.pop("latest_input_image", None)
+        tool_context.state.pop("latest_input_image_artifact", None)
 
         if image_bytes:
             part = types.Part(
