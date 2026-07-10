@@ -788,7 +788,16 @@ class ImageView(discord.ui.View):
             )
         except Exception as e:
             logger.error("Error triggering restyle: %s", e)
-            await interaction.followup.send(f"Error triggering restyle: {e}", ephemeral=True)
+            await interaction.followup.send(f"Error in restyle: {e}")
+
+    @discord.ui.button(label="⚙️", style=discord.ButtonStyle.secondary)
+    async def settings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from bot.views import create_image_settings_view
+        # We need the user's session state
+        session = await self.session_service.get_session(app_name="app", user_id=self.user_id, session_id=self.session_id)
+        state = session.state if session else {}
+        embed, view = create_image_settings_view(state, self.user_id, self.session_id, self.update_state_fn)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ---------------------------------------------------------------------------

@@ -1294,7 +1294,17 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             
 
         effective_resolution = resolution or tool_context.state.get("default_image_resolution", "0.5k")
-        effective_ratio = aspect_ratio or tool_context.state.get("default_image_ratio", "1:1")
+        
+        # Only fallback to the default aspect ratio if we are generating a brand new image
+        # If we are editing (latest_img exists), we want the API to default to the original image's aspect ratio
+        if aspect_ratio:
+            effective_ratio = aspect_ratio
+        else:
+            if latest_img:
+                effective_ratio = None
+            else:
+                effective_ratio = tool_context.state.get("default_image_ratio", "1:1")
+
         effective_model = model or tool_context.state.get("default_image_model", "gemini-3.1-flash-lite-image")
 
         if enable_search_grounding:
@@ -1323,7 +1333,8 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         }
 
         # Some models handle aspect_ratio in response_format, else we fallback to appending to prompt
-        response_format["aspect_ratio"] = effective_ratio
+        if effective_ratio:
+            response_format["aspect_ratio"] = effective_ratio
 
         kwargs = {
             "model": effective_model,
@@ -1368,6 +1379,9 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         except Exception as e:
             logger.error("Error generating image via Interactions API: %s", e)
             return {"status": "error", "message": f"Error generating image: {e}"}
+
+        # Clear the rolled style so it doesn't stick to future unrelated prompts
+        tool_context.state.pop("rolled_style", None)
 
         if image_bytes:
             part = types.Part(
