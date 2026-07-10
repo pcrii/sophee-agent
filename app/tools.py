@@ -1386,13 +1386,14 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             logger.error("Error generating image via Interactions API: %s", e)
             return {"status": "error", "message": f"Error generating image: {e}"}
 
-        # Clear the rolled style and input image so they don't stick to future unrelated prompts
+        logger.warning("Attempting to pop state variables...")
         tool_context.state.pop("rolled_style", None)
         tool_context.state.pop("latest_input_image", None)
         tool_context.state.pop("latest_input_image_artifact", None)
+        logger.warning("State variables popped successfully.")
 
         if image_bytes:
-            logger.info(f"Image bytes retrieved! Length: {len(image_bytes)}")
+            logger.warning(f"Image bytes retrieved! Length: {len(image_bytes)}")
             part = types.Part(
                 inline_data=types.Blob(
                     data=image_bytes,
@@ -1418,6 +1419,7 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
             logger.warning("The API returned success but did not provide image data. Generated image: %s", generated_image)
             return {"status": "error", "message": "No image generated."}
     except Exception as e:
+        logger.exception("FATAL Error generating image:")
         return {"status": "error", "message": f"Error generating image: {e}"}
 
 async def show_image_settings(tool_context: ToolContext) -> dict:

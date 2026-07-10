@@ -267,6 +267,19 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    @app.get("/api/debug/last-image-out")
+    async def get_last_image_out():
+        """Returns the raw string output of the last interaction API call."""
+        import os
+        out_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_out.json")
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                return {"status": "success", "content": f.read()}
+        except FileNotFoundError:
+            return {"status": "error", "message": "No output recorded yet."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     return app
 
 
