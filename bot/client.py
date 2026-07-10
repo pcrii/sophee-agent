@@ -134,8 +134,11 @@ async def on_ready():
     logger.info("Connected to %d guilds", len(client.guilds))
     
     try:
-        synced = await tree.sync()
-        logger.info(f"Synced {len(synced)} command(s)")
+        if hasattr(client, 'tree'):
+            synced = await client.tree.sync()
+            logger.info(f"Synced {len(synced)} command(s)")
+        else:
+            logger.info("No command tree found on client, skipping sync.")
     except Exception as e:
         logger.error(f"Failed to sync commands: {e}")
 
