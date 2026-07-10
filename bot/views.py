@@ -951,6 +951,8 @@ class RadioView(discord.ui.View):
             "playlist_thesis": self.playlist_data.get("playlist_thesis", "music"),
             "genre": self.playlist_data.get("playlist_thesis", "music"),
             "upcoming_tracks": list(self.playlist_data.get("tracks", [])),
+            "display_queue": None,
+            "pending_dj_events": [],
             "played_tracks": [],
             "current_track": None,
             "liked_tracks": [],
