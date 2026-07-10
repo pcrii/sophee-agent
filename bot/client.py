@@ -59,36 +59,6 @@ client = discord.Client(intents=intents)
 # ADK services
 # ---------------------------------------------------------------------------
 
-tree = discord.app_commands.CommandTree(client)
-
-@tree.command(name="radio_settings", description="Configure radio playback settings")
-async def cmd_radio_settings(interaction: discord.Interaction):
-    from bot.views import RadioSettingsView
-    # Ensure a settings stub exists if no radio is active
-    from app.radio_state import active_radios
-    if interaction.guild.id not in active_radios:
-        active_radios[interaction.guild.id] = {"active": False, "mode": "standard", "jit_enabled": True}
-        
-    view = RadioSettingsView(interaction.guild.id)
-    await interaction.response.send_message("⚙️ **Radio Settings**", view=view, ephemeral=True)
-
-@tree.command(name="image_settings", description="Configure Art Director image generation settings")
-async def cmd_image_settings(interaction: discord.Interaction):
-    from bot.views import create_image_settings_view
-    
-    # We need to get the user's session state
-    user_id = str(interaction.user.id)
-    # The session_id logic used in on_message:
-    session_id = f"discord_{interaction.channel.id}"
-    if isinstance(interaction.channel, discord.Thread):
-        session_id = f"discord_{interaction.channel.parent_id}"
-        
-    session = await session_service.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
-    state = session.state if session else {}
-    
-    embed, view = create_image_settings_view(state, user_id, session_id, update_session_state)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
 session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 artifacts_dir = os.path.join(project_root, "data", "artifacts")
