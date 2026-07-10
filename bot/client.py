@@ -476,6 +476,7 @@ async def execute_agent_turn(
         )
     )
     new_keys = after_keys - before_keys
+    logger.info("Artifact keys diff: before=%s, after=%s, new=%s", list(before_keys), list(after_keys), list(new_keys))
 
     # Handle new image artifacts
     new_image_key = None

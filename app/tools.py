@@ -1394,19 +1394,30 @@ async def generate_image(prompt: str, tool_context: ToolContext, resolution: str
         tool_context.state.pop("latest_input_image_artifact", None)
 
         if image_bytes:
+            logger.info(f"Image bytes retrieved! Length: {len(image_bytes)}")
             part = types.Part(
-                inline_data=types.Blob(mime_type="image/jpeg", data=image_bytes)
+                inline_data=types.Blob(
+                    data=image_bytes,
+                    mime_type="image/jpeg"
+                )
             )
             import time
+            import hashlib
             artifact_name = f"user:generated_image_{hashlib.md5(prompt.encode()).hexdigest()[:8]}_{int(time.time())}.jpeg"
-            await tool_context.save_artifact(artifact_name, part)
-
+            logger.info(f"Saving artifact: {artifact_name}")
+            try:
+                await tool_context.save_artifact(artifact_name, part)
+                logger.info(f"Successfully saved artifact: {artifact_name}")
+            except Exception as save_err:
+                logger.error(f"Failed to save artifact {artifact_name}: {save_err}")
+                
             return {
                 "status": "success",
                 "artifact_name": artifact_name,
                 "message": "Image successfully generated and saved.",
             }
         else:
+            logger.warning("The API returned success but did not provide image data. Generated image: %s", generated_image)
             return {"status": "error", "message": "No image generated."}
     except Exception as e:
         return {"status": "error", "message": f"Error generating image: {e}"}
