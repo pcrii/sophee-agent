@@ -11,6 +11,7 @@ import os
 import sys
 
 import discord
+from discord import app_commands
 from dotenv import load_dotenv
 from google.adk.artifacts import FileArtifactService
 from google.adk.runners import Runner
@@ -45,6 +46,7 @@ logging.basicConfig(
 logger = logging.getLogger("sophee.bot.client")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0") or "0")
 APP_NAME = "app"
 
 # ---------------------------------------------------------------------------
@@ -54,6 +56,7 @@ APP_NAME = "app"
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)
 
 # ---------------------------------------------------------------------------
 # ADK services
@@ -132,15 +135,17 @@ async def on_ready():
     set_discord_client(client)
     logger.info("Sophee is online as %s (ID: %s)", client.user, client.user.id)
     logger.info("Connected to %d guilds", len(client.guilds))
-    
+
+    # Sync slash commands to the guild (instant, no global propagation delay)
     try:
-        if hasattr(client, 'tree'):
-            synced = await client.tree.sync()
-            logger.info(f"Synced {len(synced)} command(s)")
+        if DISCORD_GUILD_ID:
+            guild_obj = discord.Object(id=DISCORD_GUILD_ID)
+            synced = await tree.sync(guild=guild_obj)
+            logger.info("Synced %d slash command(s) to guild %d", len(synced), DISCORD_GUILD_ID)
         else:
-            logger.info("No command tree found on client, skipping sync.")
+            logger.warning("DISCORD_GUILD_ID not set — slash commands not synced. Set it in .env.")
     except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
+        logger.error("Failed to sync slash commands: %s", e)
 
     # Run image cache janitor task
     from bot.cache import cleanup_image_metadata
@@ -161,6 +166,59 @@ async def on_ready():
             logger.error("Failed to resurrect active radio stations: %s", e)
 
     asyncio.create_task(_scan_and_resurrect())
+
+
+# ---------------------------------------------------------------------------
+# Slash Commands
+# ---------------------------------------------------------------------------
+
+def _guild_obj():
+    """Returns the guild Object for slash command scoping, or None if not configured."""
+    return discord.Object(id=DISCORD_GUILD_ID) if DISCORD_GUILD_ID else None
+
+
+@tree.command(name="image_settings", description="View and configure image generation defaults", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else None)
+async def cmd_image_settings(interaction: discord.Interaction):
+    """Opens the image generation settings panel (ephemeral)."""
+    user_id = str(interaction.user.id)
+    session_id = f"discord_{interaction.channel_id}"
+    session = await get_or_create_session(user_id, session_id)
+    from bot.views import create_image_settings_view
+    embed, view = create_image_settings_view(
+        session.state if session else {},
+        user_id,
+        session_id,
+        update_session_state,
+    )
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+@tree.command(name="llm_settings", description="Configure the general assistant's creativity and thinking level", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else None)
+async def cmd_llm_settings(interaction: discord.Interaction):
+    """Opens the LLM settings panel (ephemeral). Only affects the general conversational agent."""
+    user_id = str(interaction.user.id)
+    session_id = f"discord_{interaction.channel_id}"
+    session = await get_or_create_session(user_id, session_id)
+    state = session.state if session else {}
+
+    current_temp = state.get("llm_temperature", "model default")
+    current_thinking = state.get("llm_thinking_level", "model default")
+
+    embed = discord.Embed(
+        title="🤖 General Assistant Settings",
+        description="These settings only affect the **general conversational agent** (chit-chat, Q&A, writing, coding). Other agents like the DJ and Art Director are unaffected.",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="Current Settings",
+        value=f"**Temperature:** `{current_temp}`\n**Thinking Level:** `{current_thinking}`",
+        inline=False,
+    )
+    embed.set_footer(text="These settings persist for the duration of your session.")
+
+    from bot.views import LLMSettingsView
+    view = LLMSettingsView(state, update_session_state, user_id, session_id)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 async def resurrect_radio_station(session, active_radio):

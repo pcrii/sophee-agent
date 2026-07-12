@@ -27,7 +27,6 @@ from google.genai import types
 from app.tools import (
     fetch_google_news,
     stop_radio_station,
-    generate_image,
     start_radio_station,
     generate_tts,
     generate_tts_script,
@@ -39,6 +38,10 @@ from app.tools import (
     get_trending_tracks,
     roll_artistic_inspiration,
     search_lastfm,
+)
+from app.image_tools import (
+    generate_image,
+    preprocess_image,
     show_image_settings,
     set_image_defaults,
 )
@@ -204,6 +207,7 @@ art_director = Agent(
     instruction=_load_prompt("art_director"),
     tools=[
         generate_image,
+        preprocess_image,
         roll_artistic_inspiration,
         get_art_director_settings,
         show_image_settings,

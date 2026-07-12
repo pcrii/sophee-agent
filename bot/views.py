@@ -58,19 +58,30 @@ class ImageSettingsView(discord.ui.View):
         self.update_state_fn = update_state_fn
         self.user_id = user_id
         self.session_id = session_id
-        
+
         # Determine defaults
         current_model = self.session_state.get("default_image_model", "gemini-3.1-flash-lite-image")
         current_res = self.session_state.get("default_image_resolution", "0.5k")
         current_ratio = self.session_state.get("default_image_ratio", "1:1")
+        current_seed = str(self.session_state.get("default_image_seed", "none"))
+        current_temp = str(self.session_state.get("default_image_temperature", "none"))
 
         # Set default values for dropdowns
         for opt in self.model_select.options:
-            if opt.value == current_model: opt.default = True
+            if opt.value == current_model:
+                opt.default = True
         for opt in self.resolution_select.options:
-            if opt.value == current_res: opt.default = True
+            if opt.value == current_res:
+                opt.default = True
         for opt in self.ratio_select.options:
-            if opt.value == current_ratio: opt.default = True
+            if opt.value == current_ratio:
+                opt.default = True
+        for opt in self.seed_select.options:
+            if opt.value == current_seed:
+                opt.default = True
+        for opt in self.temperature_select.options:
+            if opt.value == current_temp:
+                opt.default = True
 
     async def _update_and_refresh(self, interaction: discord.Interaction):
         await self.update_state_fn(self.user_id, self.session_id, self.session_state)
@@ -121,19 +132,73 @@ class ImageSettingsView(discord.ui.View):
         self.session_state["default_image_ratio"] = select.values[0]
         await self._update_and_refresh(interaction)
 
+    @discord.ui.select(
+        placeholder="Default Seed (for reproducibility)",
+        options=[
+            discord.SelectOption(label="None (random each time)", value="none"),
+            discord.SelectOption(label="Seed: 42", value="42"),
+            discord.SelectOption(label="Seed: 123", value="123"),
+            discord.SelectOption(label="Seed: 1337", value="1337"),
+            discord.SelectOption(label="Seed: 999", value="999"),
+            discord.SelectOption(label="Seed: 2077", value="2077"),
+        ]
+    )
+    async def seed_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        val = select.values[0]
+        if val == "none":
+            self.session_state.pop("default_image_seed", None)
+        else:
+            self.session_state["default_image_seed"] = int(val)
+        await self._update_and_refresh(interaction)
+
+    @discord.ui.select(
+        placeholder="Default Temperature (creativity)",
+        options=[
+            discord.SelectOption(label="None (model default)", value="none"),
+            discord.SelectOption(label="0.2 — Very literal", value="0.2"),
+            discord.SelectOption(label="0.5 — Balanced", value="0.5"),
+            discord.SelectOption(label="0.7 — Creative", value="0.7"),
+            discord.SelectOption(label="0.9 — Very creative", value="0.9"),
+            discord.SelectOption(label="1.0 — Maximum", value="1.0"),
+        ]
+    )
+    async def temperature_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        val = select.values[0]
+        if val == "none":
+            self.session_state.pop("default_image_temperature", None)
+        else:
+            self.session_state["default_image_temperature"] = float(val)
+        await self._update_and_refresh(interaction)
+
+
 def create_image_settings_view(session_state: dict, user_id: str, session_id: str, update_state_fn) -> tuple[discord.Embed, discord.ui.View]:
     embed = discord.Embed(
         title="🎨 Image Generation Settings",
-        description="Configure defaults for image generation. These settings will expire when the session is cleansed or goes idle for 4 hours.",
+        description="Configure defaults for image generation. These settings expire when the session goes idle for 4 hours.",
         color=discord.Color.purple()
     )
-    
+
     current_model = session_state.get("default_image_model", "gemini-3.1-flash-lite-image")
     current_res = session_state.get("default_image_resolution", "0.5k")
     current_ratio = session_state.get("default_image_ratio", "1:1")
-    
-    embed.add_field(name="Current Defaults", value=f"**Model:** `{current_model}`\n**Resolution:** `{current_res}`\n**Aspect Ratio:** `{current_ratio}`", inline=False)
-    
+    current_seed = session_state.get("default_image_seed")
+    current_temp = session_state.get("default_image_temperature")
+
+    seed_str = f"`{current_seed}`" if current_seed is not None else "`random`"
+    temp_str = f"`{current_temp}`" if current_temp is not None else "`model default`"
+
+    embed.add_field(
+        name="Current Defaults",
+        value=(
+            f"**Model:** `{current_model}`\n"
+            f"**Resolution:** `{current_res}`\n"
+            f"**Aspect Ratio:** `{current_ratio}`\n"
+            f"**Seed:** {seed_str}\n"
+            f"**Temperature:** {temp_str}"
+        ),
+        inline=False
+    )
+
     last_settings = session_state.get("last_image_settings")
     if last_settings:
         model = last_settings.get("model", "N/A")
@@ -141,12 +206,18 @@ def create_image_settings_view(session_state: dict, user_id: str, session_id: st
         ratio = last_settings.get("aspect_ratio", "N/A")
         grounded = "Yes" if last_settings.get("grounding_enabled") else "No"
         ref_image = "Yes" if last_settings.get("has_image") else "No"
+        edit_mode = last_settings.get("edit_mode", "N/A")
+        seed = last_settings.get("seed")
+        temp = last_settings.get("temperature")
         prompt = last_settings.get("prompt", "N/A")
-        
+
         last_str = (
             f"**Model:** `{model}`\n"
             f"**Resolution:** `{res}`\n"
             f"**Aspect Ratio:** `{ratio}`\n"
+            f"**Edit Mode:** `{edit_mode}`\n"
+            f"**Seed:** `{seed if seed is not None else 'random'}`\n"
+            f"**Temperature:** `{temp if temp is not None else 'default'}`\n"
             f"**Search Grounding:** {grounded}\n"
             f"**Reference Image Used:** {ref_image}\n"
             f"**Prompt Used:**\n> {prompt}"
@@ -154,15 +225,97 @@ def create_image_settings_view(session_state: dict, user_id: str, session_id: st
         embed.add_field(name="Last Generation Details", value=last_str, inline=False)
     else:
         embed.add_field(name="Last Generation Details", value="*No images generated yet in this session.*", inline=False)
-        
+
     view = ImageSettingsView(session_state, update_state_fn, user_id, session_id)
     return embed, view
 
 
 
 # ---------------------------------------------------------------------------
+# LLM Settings View (for /llm_settings command)
+# ---------------------------------------------------------------------------
+
+class LLMSettingsView(discord.ui.View):
+    """Settings panel for the general conversational agent's temperature and thinking level."""
+
+    def __init__(self, session_state: dict, update_state_fn, user_id: str, session_id: str):
+        super().__init__(timeout=None)
+        self.session_state = session_state
+        self.update_state_fn = update_state_fn
+        self.user_id = user_id
+        self.session_id = session_id
+
+        current_temp = str(self.session_state.get("llm_temperature", "none"))
+        current_thinking = str(self.session_state.get("llm_thinking_level", "none"))
+
+        for opt in self.llm_temperature_select.options:
+            if opt.value == current_temp:
+                opt.default = True
+        for opt in self.llm_thinking_select.options:
+            if opt.value == current_thinking:
+                opt.default = True
+
+    async def _refresh(self, interaction: discord.Interaction):
+        await self.update_state_fn(self.user_id, self.session_id, self.session_state)
+        current_temp = self.session_state.get("llm_temperature", "model default")
+        current_thinking = self.session_state.get("llm_thinking_level", "model default")
+        embed = discord.Embed(
+            title="🤖 General Assistant Settings",
+            description="These settings only affect the **general conversational agent**. Other agents are unaffected.",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="Current Settings",
+            value=f"**Temperature:** `{current_temp}`\n**Thinking Level:** `{current_thinking}`",
+            inline=False,
+        )
+        embed.set_footer(text="These settings persist for the duration of your session.")
+        await interaction.response.edit_message(embed=embed, view=LLMSettingsView(
+            self.session_state, self.update_state_fn, self.user_id, self.session_id
+        ))
+
+    @discord.ui.select(
+        placeholder="Temperature (creativity)",
+        options=[
+            discord.SelectOption(label="None (model default)", value="none"),
+            discord.SelectOption(label="0.2 — Very literal / focused", value="0.2"),
+            discord.SelectOption(label="0.5 — Balanced", value="0.5"),
+            discord.SelectOption(label="0.7 — Creative", value="0.7"),
+            discord.SelectOption(label="0.9 — Very creative", value="0.9"),
+            discord.SelectOption(label="1.0 — Maximum randomness", value="1.0"),
+        ]
+    )
+    async def llm_temperature_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        val = select.values[0]
+        if val == "none":
+            self.session_state.pop("llm_temperature", None)
+        else:
+            self.session_state["llm_temperature"] = float(val)
+        await self._refresh(interaction)
+
+    @discord.ui.select(
+        placeholder="Thinking Level",
+        options=[
+            discord.SelectOption(label="None (model default)", value="none"),
+            discord.SelectOption(label="None (disabled)", value="disabled"),
+            discord.SelectOption(label="Low", value="low"),
+            discord.SelectOption(label="Medium", value="medium"),
+            discord.SelectOption(label="High", value="high"),
+        ]
+    )
+    async def llm_thinking_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        val = select.values[0]
+        if val == "none":
+            self.session_state.pop("llm_thinking_level", None)
+        else:
+            self.session_state["llm_thinking_level"] = val
+        await self._refresh(interaction)
+
+
+# ---------------------------------------------------------------------------
 # Shared helper: run agent and extract image artifact
 # ---------------------------------------------------------------------------
+
 
 async def _run_agent_and_get_image(
     runner, artifact_service, user_id, session_id, prompt_text, image_bytes=None, image_mime="image/png"

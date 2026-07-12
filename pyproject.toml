@@ -13,6 +13,9 @@ dependencies = [
     "python-dotenv",
     "aiosqlite",
     "ytmusicapi",
+    "Pillow",
+    "numpy",
+    "opencv-python-headless",
 ]
 
 [project.optional-dependencies]
