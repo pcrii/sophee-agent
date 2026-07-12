@@ -59,14 +59,11 @@ class ImageSettingsView(discord.ui.View):
         self.user_id = user_id
         self.session_id = session_id
 
-        # Determine defaults
         current_model = self.session_state.get("default_image_model", "gemini-3.1-flash-lite-image")
         current_res = self.session_state.get("default_image_resolution", "0.5k")
         current_ratio = self.session_state.get("default_image_ratio", "1:1")
-        current_seed = str(self.session_state.get("default_image_seed", "none"))
-        current_temp = str(self.session_state.get("default_image_temperature", "none"))
+        current_fidelity = self.session_state.get("prompt_fidelity", "guided")
 
-        # Set default values for dropdowns
         for opt in self.model_select.options:
             if opt.value == current_model:
                 opt.default = True
@@ -76,11 +73,8 @@ class ImageSettingsView(discord.ui.View):
         for opt in self.ratio_select.options:
             if opt.value == current_ratio:
                 opt.default = True
-        for opt in self.seed_select.options:
-            if opt.value == current_seed:
-                opt.default = True
-        for opt in self.temperature_select.options:
-            if opt.value == current_temp:
+        for opt in self.fidelity_select.options:
+            if opt.value == current_fidelity:
                 opt.default = True
 
     async def _update_and_refresh(self, interaction: discord.Interaction):
@@ -133,42 +127,89 @@ class ImageSettingsView(discord.ui.View):
         await self._update_and_refresh(interaction)
 
     @discord.ui.select(
-        placeholder="Default Seed (for reproducibility)",
+        placeholder="Prompt Fidelity (how much the agent elaborates)",
         options=[
-            discord.SelectOption(label="None (random each time)", value="none"),
-            discord.SelectOption(label="Seed: 42", value="42"),
-            discord.SelectOption(label="Seed: 123", value="123"),
-            discord.SelectOption(label="Seed: 1337", value="1337"),
-            discord.SelectOption(label="Seed: 999", value="999"),
-            discord.SelectOption(label="Seed: 2077", value="2077"),
+            discord.SelectOption(
+                label="Guided (default)",
+                value="guided",
+                description="Adds missing context. Proper nouns always respected as anchors.",
+                default=True,
+            ),
+            discord.SelectOption(
+                label="Literal — Trust my tokens",
+                value="literal",
+                description="Passes prompt verbatim. Never describes what proper nouns imply.",
+            ),
+            discord.SelectOption(
+                label="Creative — Agent takes control",
+                value="creative",
+                description="Full elaboration. Good for vague / lazy prompts.",
+            ),
         ]
     )
-    async def seed_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        val = select.values[0]
-        if val == "none":
-            self.session_state.pop("default_image_seed", None)
-        else:
-            self.session_state["default_image_seed"] = int(val)
+    async def fidelity_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.session_state["prompt_fidelity"] = select.values[0]
         await self._update_and_refresh(interaction)
 
-    @discord.ui.select(
-        placeholder="Default Temperature (creativity)",
-        options=[
-            discord.SelectOption(label="None (model default)", value="none"),
-            discord.SelectOption(label="0.2 — Very literal", value="0.2"),
-            discord.SelectOption(label="0.5 — Balanced", value="0.5"),
-            discord.SelectOption(label="0.7 — Creative", value="0.7"),
-            discord.SelectOption(label="0.9 — Very creative", value="0.9"),
-            discord.SelectOption(label="1.0 — Maximum", value="1.0"),
-        ]
+    @discord.ui.button(label="⚙️ More Settings (Seed/Temp)", style=discord.ButtonStyle.secondary)
+    async def more_settings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Opens a modal for entering seed and temperature values."""
+        await interaction.response.send_modal(ImageAdvancedModal(self.session_state, self.update_state_fn, self.user_id, self.session_id))
+
+
+class ImageAdvancedModal(discord.ui.Modal, title="Advanced Image Settings"):
+    """Modal for entering numeric seed and temperature values."""
+    seed_input = discord.ui.TextInput(
+        label="Seed (integer, or blank to clear)",
+        placeholder="e.g. 42  |  Leave blank for random",
+        required=False,
     )
-    async def temperature_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        val = select.values[0]
-        if val == "none":
+    temp_input = discord.ui.TextInput(
+        label="Temperature (0.0 to 1.0, or blank)",
+        placeholder="e.g. 0.7  |  Leave blank for model default",
+        required=False,
+    )
+
+    def __init__(self, session_state: dict, update_state_fn, user_id: str, session_id: str):
+        super().__init__()
+        self.session_state = session_state
+        self.update_state_fn = update_state_fn
+        self.user_id = user_id
+        self.session_id = session_id
+        
+        current_seed = session_state.get("default_image_seed")
+        current_temp = session_state.get("default_image_temperature")
+        
+        if current_seed is not None:
+            self.seed_input.default = str(current_seed)
+        if current_temp is not None:
+            self.temp_input.default = str(current_temp)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        seed_raw = self.seed_input.value.strip()
+        temp_raw = self.temp_input.value.strip()
+        
+        if not seed_raw:
+            self.session_state.pop("default_image_seed", None)
+        else:
+            try:
+                self.session_state["default_image_seed"] = int(seed_raw)
+            except ValueError:
+                await interaction.response.send_message("Seed must be an integer.", ephemeral=True)
+                return
+
+        if not temp_raw:
             self.session_state.pop("default_image_temperature", None)
         else:
-            self.session_state["default_image_temperature"] = float(val)
-        await self._update_and_refresh(interaction)
+            try:
+                self.session_state["default_image_temperature"] = float(temp_raw)
+            except ValueError:
+                await interaction.response.send_message("Temperature must be a decimal (0.0-1.0).", ephemeral=True)
+                return
+                
+        await self.update_state_fn(self.user_id, self.session_id, self.session_state)
+        embed, view = create_image_settings_view(self.session_state, self.user_id, self.session_id, self.update_state_fn)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 def create_image_settings_view(session_state: dict, user_id: str, session_id: str, update_state_fn) -> tuple[discord.Embed, discord.ui.View]:
@@ -183,7 +224,9 @@ def create_image_settings_view(session_state: dict, user_id: str, session_id: st
     current_ratio = session_state.get("default_image_ratio", "1:1")
     current_seed = session_state.get("default_image_seed")
     current_temp = session_state.get("default_image_temperature")
+    current_fidelity = session_state.get("prompt_fidelity", "guided")
 
+    fidelity_labels = {"literal": "🔍 Literal", "guided": "🧠 Guided", "creative": "🎨 Creative"}
     seed_str = f"`{current_seed}`" if current_seed is not None else "`random`"
     temp_str = f"`{current_temp}`" if current_temp is not None else "`model default`"
 
@@ -193,8 +236,9 @@ def create_image_settings_view(session_state: dict, user_id: str, session_id: st
             f"**Model:** `{current_model}`\n"
             f"**Resolution:** `{current_res}`\n"
             f"**Aspect Ratio:** `{current_ratio}`\n"
-            f"**Seed:** {seed_str}\n"
-            f"**Temperature:** {temp_str}"
+            f"**Prompt Fidelity:** {fidelity_labels.get(current_fidelity, current_fidelity)}\n"
+            f"**Temperature:** {temp_str}\n"
+            f"**Seed:** {seed_str}"
         ),
         inline=False
     )
@@ -946,11 +990,116 @@ class ImageView(discord.ui.View):
     @discord.ui.button(label="⚙️", style=discord.ButtonStyle.secondary)
     async def settings_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         from bot.views import create_image_settings_view
-        # We need the user's session state
         session = await self.session_service.get_session(app_name="app", user_id=self.user_id, session_id=self.session_id)
         state = session.state if session else {}
         embed, view = create_image_settings_view(state, self.user_id, self.session_id, self.update_state_fn)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="🔧 Process", style=discord.ButtonStyle.secondary)
+    async def process_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Opens an ephemeral panel of post-processing transform buttons."""
+        view = PostProcessView(
+            interaction.message,
+            self.user_id,
+            self.session_id,
+            self.update_state_fn,
+            self.session_service,
+        )
+        embed = discord.Embed(
+            title="🔧 Post-Process Image",
+            description=(
+                "Apply a transform to this image. The result will be posted and set as your "
+                "**new reference image** for the next edit.\n\n"
+                "**📐 Canny** — Edge trace. Strips colour and detail, gives the model a clean outline canvas.\n"
+                "**✏️ Sketch** — Soft pencil-style edges on white. Looser than Canny.\n"
+                "**🎨 Posterize** — Flattens colour bands. Strips photographic detail, great for graphic/vector-style edits.\n"
+                "**🌫️ Blur** — Heavy Gaussian blur. Wipes fine detail while preserving composition and colour mass."
+            ),
+            color=discord.Color.dark_grey(),
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# Post-Process View
+# ---------------------------------------------------------------------------
+
+class PostProcessView(discord.ui.View):
+    """Ephemeral panel attached to an image message that lets the user apply
+    PIL/OpenCV pre-processing transforms. Result is re-posted and stored as
+    the new reference image (latest_input_image) for the session."""
+
+    def __init__(self, source_message: discord.Message, user_id: str, session_id: str, update_state_fn, session_service):
+        super().__init__(timeout=300)
+        self.source_message = source_message
+        self.user_id = user_id
+        self.session_id = session_id
+        self.update_state_fn = update_state_fn
+        self.session_service = session_service
+
+    async def _get_image_bytes(self) -> tuple[bytes, str] | None:
+        """Download image bytes from the source message attachment."""
+        for attachment in self.source_message.attachments:
+            if attachment.content_type and attachment.content_type.startswith("image/"):
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(attachment.url) as resp:
+                        if resp.status == 200:
+                            return await resp.read(), attachment.content_type
+        return None, None
+
+    async def _apply_and_post(self, interaction: discord.Interaction, mode: str):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            raw_bytes, mime = await self._get_image_bytes()
+            if not raw_bytes:
+                await interaction.followup.send("❌ Could not download the source image.", ephemeral=True)
+                return
+
+            from app.image_tools import preprocess_image_bytes
+            result_bytes = await preprocess_image_bytes(raw_bytes, mode)
+            if result_bytes is None:
+                await interaction.followup.send(f"❌ Preprocessing failed for mode `{mode}`.", ephemeral=True)
+                return
+
+            # Store as new reference image in session state
+            import base64
+            encoded = base64.b64encode(result_bytes).decode("utf-8")
+            await self.update_state_fn(self.user_id, self.session_id, {
+                "latest_input_image": {"data": encoded, "mime_type": "image/png"},
+                "latest_input_image_artifact": None,
+            })
+
+            # Post the result to the channel
+            import io
+            label_map = {"canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur"}
+            label = label_map.get(mode, mode.title())
+            channel = self.source_message.channel
+            await channel.send(
+                content=f"**{label}** — reference image updated. Your next prompt will edit this.",
+                file=discord.File(io.BytesIO(result_bytes), filename=f"processed_{mode}.png"),
+            )
+            await interaction.followup.send(f"✅ Applied **{label}**. Your session now uses this as the edit base.", ephemeral=True)
+
+        except Exception as e:
+            logger.error("PostProcessView error (%s): %s", mode, e)
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    @discord.ui.button(label="📐 Canny", style=discord.ButtonStyle.secondary)
+    async def canny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "canny")
+
+    @discord.ui.button(label="✏️ Sketch", style=discord.ButtonStyle.secondary)
+    async def sketch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "sketch")
+
+    @discord.ui.button(label="🎨 Posterize", style=discord.ButtonStyle.secondary)
+    async def posterize_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "posterize")
+
+    @discord.ui.button(label="🌫️ Blur", style=discord.ButtonStyle.secondary)
+    async def blur_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "blur")
 
 
 # ---------------------------------------------------------------------------

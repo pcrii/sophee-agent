@@ -389,6 +389,74 @@ async def preprocess_image(
     }
 
 
+async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
+    """Standalone preprocessing helper: takes raw image bytes, applies a transform,
+    returns processed bytes (PNG). No ToolContext required — used by Discord UI buttons.
+
+    Args:
+        raw_bytes: Raw image bytes (any PIL-supported format).
+        mode: Transform to apply — 'canny', 'sketch', 'posterize', or 'blur'.
+
+    Returns:
+        Processed image as PNG bytes, or None on failure.
+    """
+    import io as _io
+    try:
+        pil_img = Image.open(_io.BytesIO(raw_bytes)).convert("RGB")
+
+        if mode == "canny":
+            try:
+                import cv2
+                import numpy as _np
+                img_array = _np.array(pil_img)
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                edges = cv2.Canny(gray, threshold1=50, threshold2=150)
+                processed = Image.fromarray(edges).convert("RGB")
+            except ImportError:
+                logger.warning("opencv not installed — falling back to sketch for canny mode")
+                # Sketch fallback
+                gray = pil_img.convert("L")
+                inverted = ImageOps.invert(gray)
+                blurred = inverted.filter(ImageFilter.GaussianBlur(radius=10))
+                import numpy as _np
+                gray_arr = _np.array(gray, dtype=_np.float32)
+                blur_arr = _np.array(blurred, dtype=_np.float32)
+                sketch_arr = _np.clip(
+                    (gray_arr * 255.0) / (255.0 - blur_arr + 1e-6), 0, 255
+                ).astype(_np.uint8)
+                processed = Image.fromarray(sketch_arr).convert("RGB")
+
+        elif mode == "sketch":
+            import numpy as _np
+            gray = pil_img.convert("L")
+            inverted = ImageOps.invert(gray)
+            blurred = inverted.filter(ImageFilter.GaussianBlur(radius=10))
+            gray_arr = _np.array(gray, dtype=_np.float32)
+            blur_arr = _np.array(blurred, dtype=_np.float32)
+            sketch_arr = _np.clip(
+                (gray_arr * 255.0) / (255.0 - blur_arr + 1e-6), 0, 255
+            ).astype(_np.uint8)
+            processed = Image.fromarray(sketch_arr).convert("RGB")
+
+        elif mode == "posterize":
+            processed = ImageOps.posterize(pil_img, bits=3)
+
+        elif mode == "blur":
+            processed = pil_img.filter(ImageFilter.GaussianBlur(radius=12))
+
+        else:
+            logger.error("Unknown preprocess mode: %s", mode)
+            return None
+
+        buf = _io.BytesIO()
+        processed.save(buf, format="PNG")
+        return buf.getvalue()
+
+    except Exception as e:
+        logger.error("preprocess_image_bytes error (mode=%s): %s", mode, e)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Show / Set Image Settings
 # ---------------------------------------------------------------------------
@@ -408,6 +476,7 @@ async def set_image_defaults(
     aspect_ratio: str = None,
     seed: int = None,
     temperature: float = None,
+    prompt_fidelity: str = None,
 ) -> dict:
     """Sets persistent default values for image generation in the current session.
     These defaults are automatically applied to subsequent generate_image calls.
@@ -418,6 +487,12 @@ async def set_image_defaults(
         aspect_ratio: Aspect ratio (e.g. '1:1', '16:9', '9:16').
         seed: Integer seed for reproducibility. Pass -1 to clear the current seed.
         temperature: Creativity dial (0.0-1.0). Pass -1 to clear and use model default.
+        prompt_fidelity: How much the agent elaborates on your prompt:
+            - 'literal': Trust your tokens exactly. Proper nouns and artist names are passed as-is.
+              Never describe what a proper noun implies. Only add technical quality suffixes.
+            - 'guided': Add compositional context if clearly missing (lighting, medium, framing).
+              Treat all proper nouns and artist names as sacred anchors — never describe their implied attributes.
+            - 'creative': Agent has full elaboration freedom. Good for vague or lazy prompts.
     """
     if model:
         tool_context.state["default_image_model"] = model
@@ -435,5 +510,7 @@ async def set_image_defaults(
             tool_context.state.pop("default_image_temperature", None)
         else:
             tool_context.state["default_image_temperature"] = temperature
+    if prompt_fidelity in ("literal", "guided", "creative"):
+        tool_context.state["prompt_fidelity"] = prompt_fidelity
 
     return {"status": "success", "message": "Image defaults updated."}

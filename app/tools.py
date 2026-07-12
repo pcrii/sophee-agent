@@ -1312,4 +1312,5 @@ async def get_art_director_settings(tool_context: ToolContext) -> dict:
         "art_director_mode": tool_context.state.get("art_director_mode", "simple"),
         "rolled_style": tool_context.state.get("rolled_style", None),
         "latest_resolution": tool_context.state.get("latest_resolution", "0.5k"),
+        "prompt_fidelity": tool_context.state.get("prompt_fidelity", "guided"),
     }
