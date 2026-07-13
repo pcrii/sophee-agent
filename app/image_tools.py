@@ -516,18 +516,29 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             random.shuffle(riso_colors)
             bg_color = riso_colors[0]
             
-            def create_dithered_layer(rgb_arr, mask_arr, color_tuple):
+            def create_dithered_layer(rgb_arr, mask_arr, color_tuple=None):
                 layer_rgb = rgb_arr.copy()
                 layer_rgb[mask_arr == 0] = [255, 255, 255]
-                layer_pil = Image.fromarray(layer_rgb).convert("L").convert("1").convert("L")
+                layer_pil = Image.fromarray(layer_rgb).convert("L")
+                
+                from PIL import ImageEnhance
+                enhancer = ImageEnhance.Contrast(layer_pil)
+                layer_pil = enhancer.enhance(1.8) # Boost contrast for punchier look
+                
+                layer_pil = layer_pil.convert("1").convert("L")
                 dither_arr = _np.array(layer_pil)
                 rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                rgba[dither_arr < 128] = [*color_tuple, 255]
-                rgba[dither_arr >= 128] = [0, 0, 0, 0]
+                
+                if color_tuple is None:
+                    rgba[dither_arr < 128] = [20, 20, 20, 255] # Very dark gray/black
+                    rgba[dither_arr >= 128] = [245, 245, 245, 255] # Off-white paper
+                else:
+                    rgba[dither_arr < 128] = [*color_tuple, 255]
+                    rgba[dither_arr >= 128] = [0, 0, 0, 0]
                 return Image.fromarray(rgba, "RGBA")
 
             bg_mask = 1 - combined_fg_mask
-            bg_layer = create_dithered_layer(img_array, bg_mask, bg_color)
+            bg_layer = create_dithered_layer(img_array, bg_mask, None)
             
             canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
             canvas.alpha_composite(bg_layer)
