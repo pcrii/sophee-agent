@@ -435,20 +435,24 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             elif mode == "rembg":
                 import cv2
                 import numpy as _np
+                import asyncio
                 
                 img_array = _np.array(pil_img.convert("RGB"))
-                mask = _np.zeros(img_array.shape[:2], _np.uint8)
-                bgdModel = _np.zeros((1, 65), _np.float64)
-                fgdModel = _np.zeros((1, 65), _np.float64)
-                
                 rect = (x1, y1, x2 - x1, y2 - y1)
                 
                 # If rectangle is invalid, fallback to full image
                 if rect[2] <= 0 or rect[3] <= 0:
                     rect = (1, 1, width - 2, height - 2)
                     
-                cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-                mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                def _run_grabcut(img, r):
+                    mask = _np.zeros(img.shape[:2], _np.uint8)
+                    bgdModel = _np.zeros((1, 65), _np.float64)
+                    fgdModel = _np.zeros((1, 65), _np.float64)
+                    cv2.grabCut(img, mask, r, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+                    return _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                    
+                mask2 = await asyncio.to_thread(_run_grabcut, img_array, rect)
+                
                 
                 # Create RGBA image
                 rgba_array = _np.zeros((height, width, 4), dtype=_np.uint8)
@@ -521,22 +525,29 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                     raise ValueError(f"Could not parse bounding boxes from Gemini response: {response_text}")
                     
                 boxes = json.loads(match.group(0))[:max_subjects]
-                subject_masks = []
-                combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
                 
+                import asyncio
+                def _run_grabcut(img, r):
+                    mask = _np.zeros(img.shape[:2], _np.uint8)
+                    bgdModel = _np.zeros((1, 65), _np.float64)
+                    fgdModel = _np.zeros((1, 65), _np.float64)
+                    cv2.grabCut(img, mask, r, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+                    return _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                
+                tasks = []
                 for box in boxes:
                     ymin, xmin, ymax, xmax = box
                     x1, y1 = max(0, int((xmin / 1000) * width)), max(0, int((ymin / 1000) * height))
                     x2, y2 = min(width, int((xmax / 1000) * width)), min(height, int((ymax / 1000) * height))
                     rect = (x1, y1, x2 - x1, y2 - y1)
                     if rect[2] <= 0 or rect[3] <= 0: continue
-                    mask = _np.zeros(img_array.shape[:2], _np.uint8)
-                    bgdModel = _np.zeros((1, 65), _np.float64)
-                    fgdModel = _np.zeros((1, 65), _np.float64)
-                    cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-                    mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-                    subject_masks.append(mask2)
-                    combined_fg_mask = _np.maximum(combined_fg_mask, mask2)
+                    tasks.append(asyncio.to_thread(_run_grabcut, img_array, rect))
+                    
+                subject_masks = await asyncio.gather(*tasks)
+                
+                combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
+                for m in subject_masks:
+                    combined_fg_mask = _np.maximum(combined_fg_mask, m)
                     
                 def create_dithered_layer(rgb_arr, mask_arr, color_tuple=None):
                     layer_rgb = rgb_arr.copy()
