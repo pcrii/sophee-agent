@@ -180,6 +180,87 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+
+    @api_router.get("/api/chat/sessions")
+    async def get_chat_sessions():
+        """Returns all chat sessions across all users."""
+        import sqlite3
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "sessions.db"
+        )
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT app_name, user_id, id, update_time, state
+                FROM sessions
+                ORDER BY update_time DESC
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+            sessions_list = []
+            for row in rows:
+                sessions_list.append({
+                    "app_name": row[0],
+                    "user_id": row[1],
+                    "session_id": row[2],
+                    "update_time": row[3]
+                })
+            return {"status": "success", "sessions": sessions_list}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @api_router.get("/api/chat/history/{user_id}/{session_id}")
+    async def get_chat_history(user_id: str, session_id: str):
+        """Returns the chat history for a given session."""
+        import sqlite3
+        import json
+        db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "sessions.db"
+        )
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT timestamp, event_type, event_data
+                FROM events
+                WHERE user_id = ? AND session_id = ?
+                ORDER BY timestamp ASC
+            """, (user_id, session_id))
+            rows = cursor.fetchall()
+            conn.close()
+            
+            history = []
+            for row in rows:
+                timestamp, event_type, event_data_raw = row
+                try:
+                    event_data = json.loads(event_data_raw)
+                except Exception:
+                    continue
+                    
+                if event_type == "input":
+                    content = event_data.get("content", {})
+                    parts = content.get("parts", [])
+                    text = "".join([p.get("text", "") for p in parts if "text" in p])
+                    if text:
+                        history.append({"sender": "user", "text": text, "artifacts": []})
+                elif event_type == "output":
+                    content = event_data.get("content", {})
+                    parts = content.get("parts", [])
+                    text = "".join([p.get("text", "") for p in parts if "text" in p])
+                    
+                    artifacts = []
+                    # Check for created artifacts in state update if any.
+                    # A more robust way is to just find images in the text since we added DOM parsing.
+                    if text:
+                        history.append({"sender": "bot", "text": text, "artifacts": artifacts})
+            
+            return {"status": "success", "history": history}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     @api_router.get("/api/debug/sessions")
     async def list_debug_sessions():
         """Lists the most recently updated sessions from the database."""

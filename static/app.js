@@ -1,6 +1,12 @@
-const USER_ID = "dashboard_user";
-const SESSION_ID = "dashboard_session";
 const STORAGE_KEY = "SOPHEE_API_KEY";
+
+// Dynamic Session Management
+let CURRENT_USER_ID = localStorage.getItem("SOPHEE_USER_ID") || "dashboard_user";
+let CURRENT_SESSION_ID = localStorage.getItem("SOPHEE_SESSION_ID") || `web_${Math.random().toString(36).substr(2, 9)}`;
+
+// Save initial if not set
+localStorage.setItem("SOPHEE_USER_ID", CURRENT_USER_ID);
+localStorage.setItem("SOPHEE_SESSION_ID", CURRENT_SESSION_ID);
 
 // DOM Elements
 const modal = document.getElementById("api-modal");
@@ -13,6 +19,10 @@ const chatHistory = document.getElementById("chat-history");
 
 const tabBtns = document.querySelectorAll(".tab-btn");
 const panels = document.querySelectorAll(".panel");
+
+const chatsList = document.getElementById("chats-list");
+const newChatBtn = document.getElementById("new-chat-btn");
+const refreshChatsBtn = document.getElementById("refresh-chats-btn");
 
 const suggestionsList = document.getElementById("suggestions-list");
 const refreshSuggestionsBtn = document.getElementById("refresh-suggestions-btn");
@@ -32,6 +42,7 @@ saveKeyBtn.addEventListener("click", () => {
         localStorage.setItem(STORAGE_KEY, apiKey);
         modal.classList.add("hidden");
         loadSidebarData();
+        loadActiveChat();
     }
 });
 
@@ -51,6 +62,9 @@ marked.setOptions({
 // Tab Switching
 tabBtns.forEach(btn => {
     btn.addEventListener("click", () => {
+        // Skip hidden tabs like "Active" if we are just switching via click
+        if (btn.style.display === "none") return;
+        
         tabBtns.forEach(b => b.classList.remove("active"));
         panels.forEach(p => p.classList.add("hidden"));
         
@@ -94,8 +108,8 @@ async function sendMessage() {
                 "X-API-Key": apiKey
             },
             body: JSON.stringify({
-                user_id: USER_ID,
-                session_id: SESSION_ID,
+                user_id: CURRENT_USER_ID,
+                session_id: CURRENT_SESSION_ID,
                 message: text
             })
         });
@@ -150,7 +164,7 @@ function appendMessage(text, sender, artifacts = []) {
         if (artifacts && artifacts.length > 0) {
             artifacts.forEach(filename => {
                 const img = document.createElement("img");
-                img.src = `/api/artifacts/${USER_ID}/${SESSION_ID}/${filename}?api_key=${apiKey}`;
+                img.src = `/api/artifacts/${CURRENT_USER_ID}/${CURRENT_SESSION_ID}/${filename}?api_key=${apiKey}`;
                 img.className = "artifact-img";
                 img.alt = filename;
                 contentDiv.appendChild(img);
@@ -173,10 +187,83 @@ function appendTypingIndicator() {
     return indicator;
 }
 
+// Session Loading
+newChatBtn.addEventListener("click", () => {
+    CURRENT_USER_ID = "dashboard_user";
+    CURRENT_SESSION_ID = `web_${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem("SOPHEE_USER_ID", CURRENT_USER_ID);
+    localStorage.setItem("SOPHEE_SESSION_ID", CURRENT_SESSION_ID);
+    
+    chatHistory.innerHTML = `
+        <div class="message system-msg">
+            <div class="msg-content">
+                <strong>New Chat Started.</strong><br>
+                Say hello!
+            </div>
+        </div>
+    `;
+    loadSidebarData();
+});
+
+async function loadActiveChat() {
+    if (!apiKey) return;
+    try {
+        const res = await fetch(`/api/chat/history/${CURRENT_USER_ID}/${CURRENT_SESSION_ID}`, { headers: { "X-API-Key": apiKey } });
+        if (res.ok) {
+            const data = await res.json();
+            if (data.status === "success") {
+                chatHistory.innerHTML = `
+                    <div class="message system-msg">
+                        <div class="msg-content">
+                            <strong>Loaded Session: ${CURRENT_SESSION_ID}</strong><br>
+                            User: ${CURRENT_USER_ID}
+                        </div>
+                    </div>
+                `;
+                data.history.forEach(msg => {
+                    appendMessage(msg.text, msg.sender, msg.artifacts);
+                });
+            }
+        }
+    } catch(e) { console.error(e); }
+}
+
+function selectSession(userId, sessionId) {
+    CURRENT_USER_ID = userId;
+    CURRENT_SESSION_ID = sessionId;
+    localStorage.setItem("SOPHEE_USER_ID", CURRENT_USER_ID);
+    localStorage.setItem("SOPHEE_SESSION_ID", CURRENT_SESSION_ID);
+    loadActiveChat();
+}
+
 // Sidebar Data Fetching
 async function loadSidebarData() {
     if (!apiKey) return;
     
+    // Fetch Sessions
+    try {
+        const sessRes = await fetch("/api/chat/sessions", { headers: { "X-API-Key": apiKey } });
+        if (sessRes.ok) {
+            const data = await sessRes.json();
+            if (data.status === "success") {
+                const sessions = data.sessions;
+                if (sessions.length > 0) {
+                    chatsList.innerHTML = "";
+                    sessions.forEach(s => {
+                        const li = document.createElement("li");
+                        const name = s.session_id.startsWith("web_") ? "Web Chat" : "Discord Chat";
+                        li.innerHTML = `<b>${name}</b><br><small style="opacity:0.6">${s.session_id}<br>${new Date(s.update_time).toLocaleDateString()}</small>`;
+                        li.style.cursor = "pointer";
+                        li.addEventListener("click", () => selectSession(s.user_id, s.session_id));
+                        chatsList.appendChild(li);
+                    });
+                } else {
+                    chatsList.innerHTML = `<li>No chats yet.</li>`;
+                }
+            }
+        }
+    } catch(e) { console.error(e); }
+
     // Fetch Suggestions
     try {
         const suggRes = await fetch("/api/suggestions", { headers: { "X-API-Key": apiKey } });
@@ -184,8 +271,6 @@ async function loadSidebarData() {
             const data = await suggRes.json();
             if (data.status === "success") {
                 renderList(suggestionsList, data.contents.split("\\n"));
-            } else {
-                suggestionsList.innerHTML = `<li>${data.message}</li>`;
             }
         }
     } catch(e) { console.error(e); }
@@ -202,9 +287,7 @@ async function loadSidebarData() {
                     favs[user].forEach(t => items.push(`<b>${t.title}</b><br>${t.artist}`));
                 }
                 if (items.length > 0) {
-                    suggestionsList.innerHTML = ""; // we render to fav list below
-                    const html = items.map(i => `<li>${i}</li>`).join("");
-                    favoritesList.innerHTML = html;
+                    favoritesList.innerHTML = items.map(i => `<li>${i}</li>`).join("");
                 } else {
                     favoritesList.innerHTML = `<li>No favorites yet.</li>`;
                 }
@@ -219,17 +302,18 @@ function renderList(ulElement, lines) {
         return;
     }
     const html = lines.filter(l => l.trim()).map(line => {
-        // Very basic parsing for suggestion list: - [x] **[date]** ...
         const clean = DOMPurify.sanitize(marked.parseInline(line));
         return `<li>${clean}</li>`;
     }).join("");
     ulElement.innerHTML = html;
 }
 
+refreshChatsBtn.addEventListener("click", loadSidebarData);
 refreshSuggestionsBtn.addEventListener("click", loadSidebarData);
 refreshFavoritesBtn.addEventListener("click", loadSidebarData);
 
 // Initial Load
 if (apiKey) {
     loadSidebarData();
+    loadActiveChat();
 }

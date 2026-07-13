@@ -33,12 +33,23 @@
             </div>
             
             <nav class="tabs">
-                <button class="tab-btn active" data-target="chat">Chat</button>
+                <button class="tab-btn active" data-target="chats">Chats</button>
+                <button class="tab-btn" data-target="chat" style="display:none;">Active</button>
                 <button class="tab-btn" data-target="suggestions">Suggestions</button>
                 <button class="tab-btn" data-target="favorites">Favorites</button>
             </nav>
 
             <div class="sidebar-content">
+                <!-- Chats List -->
+                <div id="chats-panel" class="panel">
+                    <h3>Saved Chats</h3>
+                    <button id="new-chat-btn" class="icon-btn" style="margin-top:0; margin-bottom:1rem; width:100%;">➕ New Web Chat</button>
+                    <ul id="chats-list" class="item-list">
+                        <li class="loading">Loading...</li>
+                    </ul>
+                    <button id="refresh-chats-btn" class="icon-btn" title="Refresh">↻ Refresh</button>
+                </div>
+
                 <!-- Suggestions List -->
                 <div id="suggestions-panel" class="panel hidden">
                     <h3>Staged Ideas</h3>
