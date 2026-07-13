@@ -582,8 +582,7 @@ async def execute_agent_turn(
 
     if new_image_key:
         import tempfile
-        from bot.views import ImageView
-
+        
         part_data = await artifact_service.load_artifact(
             app_name=APP_NAME,
             user_id=user_id,
@@ -593,11 +592,34 @@ async def execute_agent_turn(
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpeg", mode="wb") as f:
             f.write(part_data.inline_data.data)
             temp_file_path = f.name
-
-        view = ImageView(
-            user_id, session_id,
-            runner, artifact_service, session_service, update_session_state,
-        )
+            
+        if "preprocessed_" in new_image_key:
+            from bot.views import ProcessResultView
+            import re
+            
+            mode_match = re.search(r"preprocessed_(.+?)_\d+", new_image_key)
+            mode = mode_match.group(1) if mode_match else "unknown"
+            
+            original_msg_id = None
+            if message_reference and hasattr(message_reference, "reference") and message_reference.reference:
+                original_msg_id = message_reference.reference.message_id
+            elif message_reference:
+                original_msg_id = message_reference.id
+                
+            view = ProcessResultView(
+                original_message_id=original_msg_id,
+                mode=mode,
+                user_id=user_id,
+                session_id=session_id,
+                session_service=session_service,
+                update_state_fn=update_session_state
+            )
+        else:
+            from bot.views import ImageView
+            view = ImageView(
+                user_id, session_id,
+                runner, artifact_service, session_service, update_session_state,
+            )
 
         if message_reference and hasattr(message_reference, "reply"):
             sent_msg = await message_reference.reply(

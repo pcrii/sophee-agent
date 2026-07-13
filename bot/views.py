@@ -1064,6 +1064,28 @@ class ImageView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    @discord.ui.button(label="✨ Filters", style=discord.ButtonStyle.secondary)
+    async def filters_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Opens an ephemeral panel of stylistic filter buttons."""
+        view = FiltersView(
+            interaction.message,
+            self.user_id,
+            self.session_id,
+            self.update_state_fn,
+            self.session_service,
+        )
+        embed = discord.Embed(
+            title="✨ Stylistic Filters",
+            description=(
+                "Apply a final stylistic filter to this image. The result will be posted to the chat.\n\n"
+                "**🖨️ Riso Sticker** — Halftone subject on a solid neon block, over a newspaper background.\n"
+                "**🖨️ Riso Duotone** — Duotone dithered subject using complementary/analogous neon inks.\n"
+                "**🖨️ Riso Multiply** — Grayscale subject perfectly tinted with neon ink overlays."
+            ),
+            color=discord.Color.magenta(),
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
 # ---------------------------------------------------------------------------
 # Post-Process View
@@ -1091,13 +1113,9 @@ class ProcessResultView(discord.ui.View):
         view = PostProcessView(original_message, self.user_id, self.session_id, self.update_state_fn, self.session_service)
         await view._apply_and_post(interaction, self.mode)
 
-class PostProcessView(discord.ui.View):
-    """Ephemeral panel attached to an image message that lets the user apply
-    PIL/OpenCV pre-processing transforms. Result is re-posted and stored as
-    the new reference image (latest_input_image) for the session."""
-
+class BaseProcessView(discord.ui.View):
     def __init__(self, source_message: discord.Message, user_id: str, session_id: str, update_state_fn, session_service):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.source_message = source_message
         self.user_id = user_id
         self.session_id = session_id
@@ -1139,7 +1157,11 @@ class PostProcessView(discord.ui.View):
 
             # Post the result to the channel
             import io
-            label_map = {"canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_text": "📝 Remove Text", "riso_pop": "🖨️ Riso Pop"}
+            label_map = {
+                "canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", 
+                "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_text": "📝 Remove Text", 
+                "riso_sticker": "🖨️ Riso Sticker", "riso_duotone": "🖨️ Riso Duotone", "riso_multiply": "🖨️ Riso Multiply"
+            }
             label = label_map.get(mode, mode.title())
             channel = self.source_message.channel
             
@@ -1160,9 +1182,11 @@ class PostProcessView(discord.ui.View):
             await interaction.followup.send(f"✅ Applied **{label}**.", ephemeral=True)
 
         except Exception as e:
-            logger.error("PostProcessView error (%s): %s", mode, e)
+            logger.error("BaseProcessView error (%s): %s", mode, e)
             await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
+class PostProcessView(BaseProcessView):
+    """Ephemeral panel for pre-processing transforms."""
     @discord.ui.button(label="📐 Canny", style=discord.ButtonStyle.secondary)
     async def canny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._apply_and_post(interaction, "canny")
@@ -1191,9 +1215,19 @@ class PostProcessView(discord.ui.View):
     async def remove_text_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._apply_and_post(interaction, "remove_text")
 
-    @discord.ui.button(label="🖨️ Riso Pop", style=discord.ButtonStyle.primary, row=2)
-    async def riso_pop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "riso_pop")
+class FiltersView(BaseProcessView):
+    """Ephemeral panel for final stylistic filters."""
+    @discord.ui.button(label="🖨️ Riso Sticker", style=discord.ButtonStyle.primary)
+    async def riso_sticker_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "riso_sticker")
+
+    @discord.ui.button(label="🖨️ Riso Duotone", style=discord.ButtonStyle.primary)
+    async def riso_duotone_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "riso_duotone")
+
+    @discord.ui.button(label="🖨️ Riso Multiply", style=discord.ButtonStyle.primary)
+    async def riso_multiply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "riso_multiply")
 
 
 # ---------------------------------------------------------------------------
