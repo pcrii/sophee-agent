@@ -455,7 +455,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 rgba_array[:, :, 3] = mask2 * 255
                 processed = Image.fromarray(rgba_array, "RGBA")
 
-        elif mode == "riso_pop":
+        elif mode.startswith("riso_"):
             from google import genai
             import os
             import json
