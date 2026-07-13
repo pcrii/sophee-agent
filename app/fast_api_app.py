@@ -2,7 +2,25 @@
 
 import logging
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi.security.api_key import APIKeyHeader
+from starlette.status import HTTP_403_FORBIDDEN
+import os
+
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def verify_api_key(api_key_header: str = Security(api_key_header)):
+    expected_api_key = os.getenv("SOPHEE_API_KEY")
+    if not expected_api_key:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN, detail="Server API key not configured."
+        )
+    if api_key_header != expected_api_key:
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN, detail="Invalid API Key"
+        )
+
 from pydantic import BaseModel
 
 logger = logging.getLogger("sophee.app.fastapi")
@@ -25,7 +43,7 @@ def create_app():
     from google.adk.runners import Runner
     from app.agent import root_agent
 
-    app = FastAPI(title="Sophee Agent API")
+    app = FastAPI(title="Sophee Agent API", dependencies=[Depends(verify_api_key)])
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     artifacts_dir = os.path.join(project_root, "data", "artifacts")
@@ -46,6 +64,10 @@ def create_app():
         from google.genai import types
         response_text = ""
         try:
+            session = await session_service.get_session(app_name="app", user_id=request.user_id, session_id=request.session_id)
+            if not session:
+                await session_service.create_session(app_name="app", user_id=request.user_id, session_id=request.session_id)
+                
             # Track artifacts before the run
             before_keys = set(
                 await artifact_service.list_artifact_keys(
@@ -283,9 +305,10 @@ def create_app():
     return app
 
 
+
+app = create_app()
+
 if __name__ == "__main__":
     import uvicorn
-
     port = int(os.getenv("PORT", "8000"))
-    app = create_app()
     uvicorn.run(app, host="0.0.0.0", port=port)

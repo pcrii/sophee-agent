@@ -1,17 +1,3 @@
-# Copyright 2026 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import json
 import logging
 import os
@@ -31,10 +17,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BASE_URL = "http://127.0.0.1:8000"
-STREAM_URL = BASE_URL + "/run_sse"
-FEEDBACK_URL = BASE_URL + "/feedback"
+CHAT_URL = f"{BASE_URL}/api/chat"
+SUGGESTIONS_URL = f"{BASE_URL}/api/suggestions"
 
-HEADERS = {"Content-Type": "application/json"}
+API_KEY = "test_dev_key"
+HEADERS = {
+    "Content-Type": "application/json",
+    "X-API-Key": API_KEY
+}
 
 
 def log_output(pipe: Any, log_func: Any) -> None:
@@ -57,6 +47,7 @@ def start_server() -> subprocess.Popen[str]:
     ]
     env = os.environ.copy()
     env["INTEGRATION_TEST"] = "TRUE"
+    env["SOPHEE_API_KEY"] = API_KEY
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -66,7 +57,6 @@ def start_server() -> subprocess.Popen[str]:
         env=env,
     )
 
-    # Start threads to log stdout and stderr in real-time
     threading.Thread(
         target=log_output, args=(process.stdout, logger.info), daemon=True
     ).start()
@@ -82,7 +72,7 @@ def wait_for_server(timeout: int = 90, interval: int = 1) -> bool:
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            response = requests.get("http://127.0.0.1:8000/docs", timeout=10)
+            response = requests.get(f"{BASE_URL}/docs", timeout=10)
             if response.status_code == 200:
                 logger.info("Server is ready")
                 return True
@@ -112,97 +102,31 @@ def server_fixture(request: Any) -> Iterator[subprocess.Popen[str]]:
     yield server_process
 
 
-def test_chat_stream(server_fixture: subprocess.Popen[str]) -> None:
-    """Test the chat stream functionality."""
-    logger.info("Starting chat stream test")
-    # Create session first
+def test_auth_rejection(server_fixture: subprocess.Popen[str]) -> None:
+    """Test that requests without API key are rejected."""
+    response = requests.get(SUGGESTIONS_URL, timeout=10)
+    assert response.status_code == 403
+
+
+def test_chat(server_fixture: subprocess.Popen[str]) -> None:
+    """Test the chat API functionality."""
     user_id = "test_user_123"
-    session_data = {"state": {"preferred_language": "English", "visit_count": 1}}
+    session_id = "test_session_123"
 
-    session_url = f"{BASE_URL}/apps/app/users/{user_id}/sessions"
-    session_response = requests.post(
-        session_url,
-        headers=HEADERS,
-        json=session_data,
-        timeout=60,
-    )
-    assert session_response.status_code == 200
-    logger.info(f"Session creation response: {session_response.json()}")
-    session_id = session_response.json()["id"]
-
-    # Then send chat message
     data = {
-        "app_name": "app",
         "user_id": user_id,
         "session_id": session_id,
-        "new_message": {
-            "role": "user",
-            "parts": [{"text": "Hi!"}],
-        },
-        "streaming": True,
+        "message": "Hi, who are you?",
     }
-    response = requests.post(
-        STREAM_URL, headers=HEADERS, json=data, stream=True, timeout=60
-    )
+    response = requests.post(CHAT_URL, headers=HEADERS, json=data, timeout=60)
     assert response.status_code == 200
-
-    # Parse SSE events from response
-    events = []
-    for line in response.iter_lines():
-        if line:
-            # SSE format is "data: {json}"
-            line_str = line.decode("utf-8")
-            if line_str.startswith("data: "):
-                event_json = line_str[6:]  # Remove "data: " prefix
-                event = json.loads(event_json)
-                events.append(event)
-
-    assert events, "No events received from stream"
-    # Check for valid content in the response
-    has_text_content = False
-    for event in events:
-        content = event.get("content")
-        if (
-            content is not None
-            and content.get("parts")
-            and any(part.get("text") for part in content["parts"])
-        ):
-            has_text_content = True
-            break
-
-    assert has_text_content, "Expected at least one event with text content"
+    resp_json = response.json()
+    assert resp_json.get("status") == "success"
+    assert "response" in resp_json
 
 
-def test_chat_stream_error_handling(server_fixture: subprocess.Popen[str]) -> None:
-    """Test the chat stream error handling."""
-    logger.info("Starting chat stream error handling test")
-    data = {
-        "input": {"messages": [{"type": "invalid_type", "content": "Cause an error"}]}
-    }
-    response = requests.post(
-        STREAM_URL, headers=HEADERS, json=data, stream=True, timeout=10
-    )
-
-    assert response.status_code == 422, (
-        f"Expected status code 422, got {response.status_code}"
-    )
-    logger.info("Error handling test completed successfully")
-
-
-def test_collect_feedback(server_fixture: subprocess.Popen[str]) -> None:
-    """
-    Test the feedback collection endpoint (/feedback) to ensure it properly
-    logs the received feedback.
-    """
-    # Create sample feedback data
-    feedback_data = {
-        "score": 4,
-        "user_id": "test-user-456",
-        "session_id": "test-session-456",
-        "text": "Great response!",
-    }
-
-    response = requests.post(
-        FEEDBACK_URL, json=feedback_data, headers=HEADERS, timeout=10
-    )
+def test_get_suggestions(server_fixture: subprocess.Popen[str]) -> None:
+    """Test the suggestions API functionality."""
+    response = requests.get(SUGGESTIONS_URL, headers=HEADERS, timeout=10)
     assert response.status_code == 200
+    assert "status" in response.json()
