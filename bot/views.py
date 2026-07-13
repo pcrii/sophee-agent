@@ -1233,6 +1233,10 @@ class FiltersView(BaseProcessView):
     async def riso_sticker_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._apply_and_post(interaction, "riso_sticker_book")
 
+    @discord.ui.button(label="🖨️ Riso Tritone", style=discord.ButtonStyle.primary, row=1)
+    async def riso_tritone_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "riso_tritone")
+
 
 # ---------------------------------------------------------------------------
 # Radio View

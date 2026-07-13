@@ -297,6 +297,7 @@ async def preprocess_image(
             - 'remove_text': Uses AI to remove typography/text while preserving the scene.
             - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
             - 'riso_duotone': Applies a Risograph print aesthetic (Duotone style).
+            - 'riso_tritone': Applies a Risograph print aesthetic (Tritone style).
             - 'riso_multiply': Applies a Risograph print aesthetic (Multiply style).
             - 'riso_sticker_book': Applies a Risograph print aesthetic (Sticker Book style).
 
@@ -679,6 +680,73 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 # We'll use white for the stroke to dynamically dodge the duotone colors underneath!
                 blend_arr = _np.full((height, width, 3), 128, dtype=_np.uint8)
                 blend_arr[edges > 0] = [255, 255, 255] 
+                
+                from PIL import ImageChops
+                processed = ImageChops.overlay(processed, Image.fromarray(blend_arr, "RGB"))
+
+            elif mode == "riso_tritone":
+                import random
+                import io
+                from google import genai
+                import os
+                import base64
+                
+                # 1. Ask Gemini for AI-generated line art
+                api_key = os.getenv("GEMINI_API_KEY")
+                client = genai.Client(api_key=api_key)
+                b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+                
+                interaction = await client.aio.interactions.create(
+                    model="gemini-3.1-flash-image",
+                    input=[
+                        {"type": "text", "text": "Redraw this image as a minimalist, continuous line-art drawing. Use clean, smooth, abstract strokes. Solid white lines on a pure black background. No shading."},
+                        {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                    ],
+                )
+                
+                generated_image = interaction.output_image
+                if not generated_image:
+                    raise RuntimeError("Gemini failed to generate line art")
+                
+                ai_lines_pil = Image.open(io.BytesIO(generated_image.image_bytes)).convert("L").resize((width, height))
+                import numpy as _np
+                edges = _np.array(ai_lines_pil)
+                
+                # 2. Tone map logic for tritone
+                avg_rgb = get_dominant_color(img_array)
+                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
+                
+                # Primary color
+                c1_distances = [(c, color_distance_hue(c, avg_rgb)) for c in riso_colors]
+                c1_distances.sort(key=lambda x: x[1])
+                c1 = random.choice([c[0] for c in c1_distances[:3]])
+                
+                # Triadic 1
+                c2_candidates = [c for c in riso_colors if c != c1]
+                target_rgb_2 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.33) % 1.0, 1, 1))
+                c2_distances = [(c, color_distance_hue(c, target_rgb_2)) for c in c2_candidates]
+                c2_distances.sort(key=lambda x: x[1])
+                c2 = random.choice([c[0] for c in c2_distances[:2]])
+                
+                # Triadic 2
+                c3_candidates = [c for c in riso_colors if c not in (c1, c2)]
+                target_rgb_3 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.66) % 1.0, 1, 1))
+                c3_distances = [(c, color_distance_hue(c, target_rgb_3)) for c in c3_candidates]
+                c3_distances.sort(key=lambda x: x[1])
+                c3 = random.choice([c[0] for c in c3_distances[:2]])
+                
+                # Sort by luminance
+                c_dark, c_mid, c_light = sorted([c1, c2, c3], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
+                
+                layer_pil = Image.fromarray(img_array).convert("L")
+                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.2)
+                
+                # 3-color tone map!
+                processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light, mid=c_mid)
+                
+                # 3. Composite AI strokes
+                blend_arr = _np.full((height, width, 3), 128, dtype=_np.uint8)
+                blend_arr[edges > 128] = [255, 255, 255] # Dodge
                 
                 from PIL import ImageChops
                 processed = ImageChops.overlay(processed, Image.fromarray(blend_arr, "RGB"))
