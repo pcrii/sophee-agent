@@ -383,7 +383,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             import base64
             b64_data = base64.b64encode(raw_bytes).decode("utf-8")
             interaction = await client.aio.interactions.create(
-                model="gemini-3.1-flash",
+                model="gemini-3.5-flash",
                 input=[
                     {"type": "text", "text": prompt},
                     {"type": "image", "data": b64_data, "mime_type": "image/png"}
@@ -457,7 +457,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             import base64
             b64_data = base64.b64encode(raw_bytes).decode("utf-8")
             interaction = await client.aio.interactions.create(
-                model="gemini-3.1-flash",
+                model="gemini-3.5-flash",
                 input=[
                     {"type": "text", "text": prompt},
                     {"type": "image", "data": b64_data, "mime_type": "image/png"}
