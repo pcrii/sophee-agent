@@ -645,6 +645,18 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 
                 # This applies a smooth gradient map (tone mapping)
                 processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light)
+                
+                # Add canny map overlay
+                import cv2
+                gray_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                edges = cv2.Canny(gray_cv, threshold1=50, threshold2=150)
+                
+                edges_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                edges_rgba[edges > 0] = [255, 255, 255, 255] # White strokes, transparent background
+                
+                processed = processed.convert("RGBA")
+                processed.alpha_composite(Image.fromarray(edges_rgba, "RGBA"))
+                processed = processed.convert("RGB")
 
             elif mode == "riso_multiply":
                 avg_rgb = get_dominant_color(img_array)
