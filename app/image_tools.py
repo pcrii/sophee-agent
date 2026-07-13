@@ -628,14 +628,30 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 processed = canvas.convert("RGB")
                 
             elif mode == "riso_duotone":
+                import random
                 avg_rgb = get_dominant_color(img_array)
                 h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
                 
-                c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
-                # Use a complementary hue for strong contrast
-                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))
+                c1_distances = [(c, color_distance_hue(c, avg_rgb)) for c in riso_colors]
+                c1_distances.sort(key=lambda x: x[1])
+                # Pick one of the top 3 closest colors to the dominant hue
+                c1 = random.choice([c[0] for c in c1_distances[:3]])
+                
+                # Pick a random color harmony for the second color (complementary, triadic, analogous)
+                target_hue = random.choice([
+                    (h + 0.5) % 1.0,
+                    (h + 0.33) % 1.0,
+                    (h + 0.66) % 1.0,
+                    (h + 0.15) % 1.0,
+                    (h - 0.15) % 1.0,
+                ])
+                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
+                
                 c2_candidates = [c for c in riso_colors if c != c1]
-                c2 = min(c2_candidates, key=lambda c: color_distance_hue(c, target_rgb))
+                c2_distances = [(c, color_distance_hue(c, target_rgb)) for c in c2_candidates]
+                c2_distances.sort(key=lambda x: x[1])
+                # Pick one of the top 2 closest colors to the target hue
+                c2 = random.choice([c[0] for c in c2_distances[:2]])
                 
                 c_dark, c_light = sorted([c1, c2], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
                 
