@@ -1117,7 +1117,7 @@ class PostProcessView(discord.ui.View):
 
             # Post the result to the channel
             import io
-            label_map = {"canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur"}
+            label_map = {"canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG"}
             label = label_map.get(mode, mode.title())
             channel = self.source_message.channel
             await channel.send(
@@ -1145,6 +1145,14 @@ class PostProcessView(discord.ui.View):
     @discord.ui.button(label="🌫️ Blur", style=discord.ButtonStyle.secondary)
     async def blur_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._apply_and_post(interaction, "blur")
+
+    @discord.ui.button(label="🎯 Smart Crop", style=discord.ButtonStyle.primary, row=1)
+    async def smart_crop_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "smart_crop")
+
+    @discord.ui.button(label="✂️ Remove BG", style=discord.ButtonStyle.primary, row=1)
+    async def rembg_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "rembg")
 
 
 # ---------------------------------------------------------------------------

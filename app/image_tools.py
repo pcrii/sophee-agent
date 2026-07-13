@@ -404,9 +404,62 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
     """
     import io as _io
     try:
-        pil_img = Image.open(_io.BytesIO(raw_bytes)).convert("RGB")
+        pil_img = Image.open(_io.BytesIO(raw_bytes))
 
-        if mode == "canny":
+        if mode == "rembg":
+            import rembg
+            output_bytes = rembg.remove(raw_bytes)
+            processed = Image.open(_io.BytesIO(output_bytes)).convert("RGBA")
+
+        elif mode == "smart_crop":
+            # Use Gemini 3.1 Flash to get bounding box of main subject
+            from google import genai
+            import os
+            import json
+            import re
+            
+            # Since preprocess_image_bytes doesn't have tool_context, we initialize a raw client
+            api_key = os.getenv("GEMINI_API_KEY")
+            client = genai.Client(api_key=api_key)
+            
+            prompt = "Return a JSON list representing the 2D bounding box of the primary foreground subject in this image in the format [ymin, xmin, ymax, xmax], normalized from 0 to 1000. Output ONLY the JSON list, nothing else."
+            
+            import base64
+            b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+            interaction = await client.aio.interactions.create(
+                model="gemini-3.1-flash",
+                input=[
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                ],
+            )
+            
+            response_text = ""
+            for step in interaction.steps:
+                for block in step.model_turn.parts:
+                    if block.text:
+                        response_text += block.text
+            
+            # Extract JSON list using regex
+            match = re.search(r"\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]", response_text)
+            if not match:
+                raise ValueError(f"Could not parse bounding box from Gemini response: {response_text}")
+            
+            box = json.loads(match.group(0))
+            ymin, xmin, ymax, xmax = box
+            
+            width, height = pil_img.size
+            crop_box = (
+                int((xmin / 1000) * width),
+                int((ymin / 1000) * height),
+                int((xmax / 1000) * width),
+                int((ymax / 1000) * height),
+            )
+            
+            processed = pil_img.crop(crop_box)
+
+        elif mode == "canny":
+            pil_img = pil_img.convert("RGB")
             try:
                 import cv2
                 import numpy as _np
