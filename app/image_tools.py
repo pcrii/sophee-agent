@@ -708,7 +708,8 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 if not generated_image:
                     raise RuntimeError("Gemini failed to generate line art")
                 
-                ai_lines_pil = Image.open(io.BytesIO(generated_image.image_bytes)).convert("L").resize((width, height))
+                output_bytes = base64.b64decode(generated_image.data)
+                ai_lines_pil = Image.open(io.BytesIO(output_bytes)).convert("L").resize((width, height))
                 import numpy as _np
                 edges = _np.array(ai_lines_pil)
                 
