@@ -563,11 +563,18 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 elif mode == "riso_duotone":
                     c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
                     target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.1) % 1.0, 1, 1))
-                    c2 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb))
+                    c2_candidates = [c for c in riso_colors if c != c1]
+                    c2 = min(c2_candidates, key=lambda c: color_distance_hue(c, target_rgb))
                     c_dark, c_light = sorted([c1, c2], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
+                    
                     layer_rgb = img_array.copy()
                     layer_rgb[s_mask == 0] = [255, 255, 255]
-                    dither_1 = _np.array(Image.fromarray(layer_rgb).convert("L").convert("1").convert("L"))
+                    
+                    from PIL import ImageEnhance
+                    layer_pil = Image.fromarray(layer_rgb).convert("L")
+                    layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
+                    dither_1 = _np.array(layer_pil)
+                    
                     rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
                     rgba[(dither_1 < 128) & (s_mask == 1)] = [*c_dark, 255]
                     rgba[(dither_1 >= 128) & (s_mask == 1)] = [*c_light, 255]
