@@ -298,6 +298,7 @@ async def preprocess_image(
             - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
             - 'riso_duotone': Applies a Risograph print aesthetic (Duotone style).
             - 'riso_multiply': Applies a Risograph print aesthetic (Multiply style).
+            - 'riso_sticker_book': Applies a Risograph print aesthetic (Sticker Book style).
 
     Returns:
         A dict with status and the artifact name of the preprocessed image (shown to user as a preview).
@@ -485,18 +486,20 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 diff = abs(h1 - h2)
                 return min(diff, 1.0 - diff)
                 
-            if mode == "riso_sticker":
+            if mode in ("riso_sticker", "riso_sticker_book"):
                 from google import genai
                 import os
                 import json
                 import re
                 import cv2
+                import random
                 
                 api_key = os.getenv("GEMINI_API_KEY")
                 client = genai.Client(api_key=api_key)
                 
+                max_subjects = 3 if mode == "riso_sticker" else 10
                 prompt = (
-                    "Analyze this image and find the main subjects or characters (up to 3). "
+                    f"Analyze this image and find the main subjects or characters (up to {max_subjects}). "
                     "For each subject, return a bounding box in the format [ymin, xmin, ymax, xmax]. "
                     "The coordinates must be integers from 0 to 1000. "
                     "Return ONLY a JSON list of lists, e.g. [[ymin, xmin, ymax, xmax], [ymin, xmin, ymax, xmax]]."
@@ -517,7 +520,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 if not match:
                     raise ValueError(f"Could not parse bounding boxes from Gemini response: {response_text}")
                     
-                boxes = json.loads(match.group(0))[:3]
+                boxes = json.loads(match.group(0))[:max_subjects]
                 subject_masks = []
                 combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
                 
@@ -541,28 +544,73 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                     layer_pil = Image.fromarray(layer_rgb).convert("L")
                     layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
                     dither_arr = _np.array(layer_pil)
-                    rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                    rgba = _np.zeros((layer_rgb.shape[0], layer_rgb.shape[1], 4), dtype=_np.uint8)
                     if color_tuple is None:
                         rgba[dither_arr < 128] = [20, 20, 20, 255]
                     else:
                         rgba[dither_arr < 128] = [*color_tuple, 255]
                     return Image.fromarray(rgba, "RGBA")
                     
-                bg_mask = 1 - combined_fg_mask
                 canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
-                canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, None))
+                
+                if mode == "riso_sticker":
+                    bg_mask = 1 - combined_fg_mask
+                    canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, None))
+                else: # riso_sticker_book
+                    # Multiply background with ink burns where stickers used to be
+                    avg_bg_rgb = get_dominant_color(img_array, 1 - combined_fg_mask)
+                    h, _, _ = colorsys.rgb_to_hsv(avg_bg_rgb[0]/255.0, avg_bg_rgb[1]/255.0, avg_bg_rgb[2]/255.0)
+                    bg_neon = min(riso_colors, key=lambda c: color_distance_hue(c, tuple(int(x*255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))))
+                    
+                    gray_arr = _np.array(Image.fromarray(img_array).convert("L").convert("RGB")).astype(_np.float32) / 255.0
+                    bg_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                    bg_rgba[..., :3] = (gray_arr * _np.array(bg_neon, dtype=_np.float32)).astype(_np.uint8)
+                    
+                    # Ink burn (darken where stickers were)
+                    burn_mask = combined_fg_mask == 1
+                    bg_rgba[burn_mask, :3] = (bg_rgba[burn_mask, :3] * 0.4).astype(_np.uint8)
+                    bg_rgba[..., 3] = 255
+                    canvas.alpha_composite(Image.fromarray(bg_rgba, "RGBA"))
                 
                 for i, s_mask in enumerate(subject_masks):
                     avg_rgb = get_dominant_color(img_array, s_mask)
                     h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
-                    
                     target_hue = (h + 0.5) % 1.0
                     target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
                     s_color = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb))
-                    sticker_bg = _np.zeros((height, width, 4), dtype=_np.uint8)
-                    sticker_bg[s_mask == 1] = [*s_color, 255]
-                    canvas.alpha_composite(Image.fromarray(sticker_bg, "RGBA"))
-                    canvas.alpha_composite(create_dithered_layer(img_array, s_mask, (20, 20, 20)))
+                    
+                    if mode == "riso_sticker":
+                        sticker_bg = _np.zeros((height, width, 4), dtype=_np.uint8)
+                        sticker_bg[s_mask == 1] = [*s_color, 255]
+                        canvas.alpha_composite(Image.fromarray(sticker_bg, "RGBA"))
+                        canvas.alpha_composite(create_dithered_layer(img_array, s_mask, (20, 20, 20)))
+                    else:
+                        # Sticker Book: drift, rotate, no stroke
+                        # Crop to bounding box of the mask to rotate it
+                        y_indices, x_indices = _np.where(s_mask == 1)
+                        if len(y_indices) == 0: continue
+                        min_y, max_y = y_indices.min(), y_indices.max()
+                        min_x, max_x = x_indices.min(), x_indices.max()
+                        
+                        cropped_mask = s_mask[min_y:max_y+1, min_x:max_x+1]
+                        cropped_img = img_array[min_y:max_y+1, min_x:max_x+1]
+                        
+                        sticker_dither = create_dithered_layer(cropped_img, cropped_mask, s_color)
+                        
+                        # Rotate and drift
+                        angle = random.uniform(-10, 10)
+                        dx = random.randint(-20, 20)
+                        dy = random.randint(-20, 20)
+                        
+                        sticker_dither = sticker_dither.rotate(angle, expand=True, fillcolor=(0,0,0,0))
+                        
+                        # Calculate paste coordinates
+                        paste_x = min_x + dx - (sticker_dither.width - (max_x - min_x)) // 2
+                        paste_y = min_y + dy - (sticker_dither.height - (max_y - min_y)) // 2
+                        
+                        temp_canvas = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+                        temp_canvas.paste(sticker_dither, (paste_x, paste_y), sticker_dither)
+                        canvas.alpha_composite(temp_canvas)
                     
                 processed = canvas.convert("RGB")
                 
