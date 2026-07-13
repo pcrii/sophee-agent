@@ -463,7 +463,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             import random
             import cv2
             import numpy as _np
-            import random
+            import colorsys
             
             api_key = os.getenv("GEMINI_API_KEY")
             client = genai.Client(api_key=api_key)
