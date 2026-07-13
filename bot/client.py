@@ -369,7 +369,37 @@ async def execute_agent_turn(
             # Default behavior: grab just the chunks of the single replied message
             chunked_context = await fetch_chunked_context(replied_msg)
             if chunked_context:
-                msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
+                # Check if this message is already in the agent's recent context
+                already_in_context = False
+                search_chunk = chunked_context.strip()[:100]
+                if search_chunk:
+                    try:
+                        import sqlite3, json, os
+                        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
+                        conn = sqlite3.connect(db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            SELECT event_data FROM events 
+                            WHERE session_id = ? 
+                            ORDER BY timestamp DESC LIMIT 30
+                        """, (session_id,))
+                        
+                        for row in cursor.fetchall():
+                            try:
+                                event_data = json.loads(row[0])
+                                if "content" in event_data and "parts" in event_data["content"]:
+                                    text_parts = "".join([p.get("text", "") for p in event_data["content"]["parts"] if "text" in p])
+                                    if search_chunk in text_parts:
+                                        already_in_context = True
+                                        break
+                            except Exception:
+                                pass
+                        conn.close()
+                    except Exception as e:
+                        logger.error("Failed to check if replied context is in ADK history: %s", e)
+
+                if not already_in_context:
+                    msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
 
     # Inject adventure state if active
     is_adv_active = session and session.state.get("adventure_active")
