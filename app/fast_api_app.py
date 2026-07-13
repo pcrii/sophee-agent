@@ -122,36 +122,39 @@ def create_app():
             logger.exception("Error during artifact retrieval:")
             return {"status": "error", "message": str(e)}
 
+
     @app.get("/api/suggestions")
     async def get_suggestions():
-        """Returns the raw contents of the suggestion_box.md file."""
-        suggestion_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "suggestion_box.md"
-        )
-        if not os.path.exists(suggestion_file):
-            return {"status": "info", "message": "No suggestions found.", "contents": ""}
+        """Returns the suggestions from the SQLite database."""
+        import sqlite3
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
         try:
-            with open(suggestion_file, encoding="utf-8") as f:
-                contents = f.read()
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, timestamp, author, content, status FROM suggestions ORDER BY id ASC")
+            rows = cursor.fetchall()
+            conn.close()
+            
+            lines = []
+            for row in rows:
+                db_id, timestamp, author, content, status = row
+                box = "[x]" if status == "DONE" else "[ ]"
+                lines.append(f"- {box} **[{timestamp}]** {author} (ID: {db_id}): {content}")
+                
+            contents = "
+".join(lines)
             return {"status": "success", "contents": contents}
+        except sqlite3.OperationalError:
+            return {"status": "info", "message": "No suggestions found.", "contents": ""}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+
     @app.post("/api/suggestions/update")
     async def update_suggestions(request: SuggestionsUpdateRequest):
-        """Overwrites the contents of the suggestion_box.md file."""
-        suggestion_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "suggestion_box.md"
-        )
-        os.makedirs(os.path.dirname(suggestion_file), exist_ok=True)
-        try:
-            with open(suggestion_file, "w", encoding="utf-8") as f:
-                f.write(request.contents)
-            return {"status": "success", "message": "Suggestions file updated successfully."}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+        """Deprecated. Use the agent tools to manage suggestion status."""
+        return {"status": "error", "message": "Suggestions are now managed via SQLite. Please use the agent tools to mark them as DONE."}
+
 
     @app.get("/api/favorites")
     async def get_favorites():

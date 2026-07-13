@@ -1314,3 +1314,71 @@ async def get_art_director_settings(tool_context: ToolContext) -> dict:
         "latest_resolution": tool_context.state.get("latest_resolution", "0.5k"),
         "prompt_fidelity": tool_context.state.get("prompt_fidelity", "guided"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Suggestion Box Management
+# ---------------------------------------------------------------------------
+
+async def get_pending_suggestions(tool_context: ToolContext) -> dict:
+    """Fetches all pending (incomplete) suggestions from the suggestion box database.
+    Use this when the user asks you to check the suggestion box, read ideas, or see what's pending.
+    
+    Returns:
+        A dictionary containing the pending suggestions formatted as a string.
+    """
+    import sqlite3
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, timestamp, author, content FROM suggestions WHERE status = 'PENDING' ORDER BY id ASC")
+        rows = cursor.fetchall()
+        conn.close()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+        
+    if not rows:
+        return {"status": "info", "message": "There are no pending suggestions!"}
+        
+    lines = []
+    for row in rows:
+        db_id, timestamp, author, content = row
+        lines.append(f"- [ID: {db_id}] **[{timestamp}]** {author}: {content}")
+        
+    return {
+        "status": "success",
+        "count": len(rows),
+        "suggestions": "\n".join(lines)
+    }
+
+async def mark_suggestion_status(id: int, status: str, tool_context: ToolContext) -> dict:
+    """Updates the status of a suggestion in the database.
+    Use this when you have completed a suggestion and want to mark it as DONE, or if you are ignoring it.
+    
+    Args:
+        id: The integer ID of the suggestion.
+        status: The new status (must be 'DONE', 'PENDING', or 'IGNORED').
+        
+    Returns:
+        A dictionary with the success or error message.
+    """
+    if status not in ('DONE', 'PENDING', 'IGNORED'):
+        return {"status": "error", "message": "Status must be DONE, PENDING, or IGNORED."}
+        
+    import sqlite3
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE suggestions SET status = ? WHERE id = ?", (status, id))
+        changes = conn.total_changes
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+        
+    if changes > 0:
+        return {"status": "success", "message": f"Successfully marked suggestion {id} as {status}."}
+    else:
+        return {"status": "error", "message": f"Suggestion ID {id} not found."}

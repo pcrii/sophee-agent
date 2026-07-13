@@ -25,6 +25,8 @@ from google.adk.tools.google_search_tool import GoogleSearchTool
 from google.genai import types
 
 from app.tools import (
+    get_pending_suggestions,
+    mark_suggestion_status,
     fetch_google_news,
     stop_radio_station,
     start_radio_station,
@@ -248,6 +250,8 @@ general_assistant = Agent(
         # Suggestion box
         scrape_suggestion_box,
         read_suggestion_box,
+        get_pending_suggestions,
+        mark_suggestion_status,
         *_user_tools,
     ],
 )

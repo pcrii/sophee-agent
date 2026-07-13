@@ -1,13 +1,11 @@
 """Suggestion box scraper — reads messages from a designated Discord channel
-and appends them to a persistent local file for later review.
-
-The file acts as a rolling notebook: new entries are appended at the bottom,
-and old entries are pruned from the top when the file exceeds MAX_LINES.
+and appends them to a persistent SQLite database for later review.
 """
 
 import json
 import logging
 import os
+import sqlite3
 from datetime import datetime, timezone
 
 from google.adk.tools import ToolContext
@@ -16,15 +14,24 @@ logger = logging.getLogger("sophee.app.suggestion_box")
 
 # Configuration
 SUGGESTION_CHANNEL_ID = int(os.getenv("SUGGESTION_CHANNEL_ID", "0"))
-SUGGESTION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "suggestion_box.md")
 LAST_SCRAPED_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", ".suggestion_box_cursor.json")
-MAX_LINES = 500  # Prune oldest entries when file exceeds this
 
 
-def _ensure_data_dir():
-    """Creates the data directory if it doesn't exist."""
-    data_dir = os.path.dirname(SUGGESTION_FILE)
-    os.makedirs(data_dir, exist_ok=True)
+def _ensure_db():
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_message_id INTEGER UNIQUE,
+            timestamp TEXT,
+            author TEXT,
+            content TEXT,
+            status TEXT DEFAULT 'PENDING'
+        )
+    """)
+    return conn
 
 
 def _get_last_scraped_id() -> int | None:
@@ -41,30 +48,15 @@ def _get_last_scraped_id() -> int | None:
 
 def _set_last_scraped_id(message_id: int):
     """Saves the ID of the most recently scraped message."""
-    _ensure_data_dir()
+    data_dir = os.path.dirname(LAST_SCRAPED_FILE)
+    os.makedirs(data_dir, exist_ok=True)
     with open(LAST_SCRAPED_FILE, "w", encoding="utf-8") as f:
         json.dump({"last_message_id": message_id, "scraped_at": datetime.now(timezone.utc).isoformat()}, f)
 
 
-def _prune_file():
-    """If the suggestion file exceeds MAX_LINES, trim oldest entries from the top."""
-    if not os.path.exists(SUGGESTION_FILE):
-        return
-
-    with open(SUGGESTION_FILE, encoding="utf-8") as f:
-        lines = f.readlines()
-
-    if len(lines) > MAX_LINES:
-        # Keep the last MAX_LINES lines
-        trimmed = lines[-MAX_LINES:]
-        with open(SUGGESTION_FILE, "w", encoding="utf-8") as f:
-            f.writelines(trimmed)
-        logger.info("Pruned suggestion box from %d to %d lines", len(lines), MAX_LINES)
-
-
 async def scrape_suggestion_box(tool_context: ToolContext) -> dict:
     """Scrapes new messages from the suggestion box Discord channel and appends
-    them to the local suggestion_box.md file. Only fetches messages newer than
+    them to the local suggestions database. Only fetches messages newer than
     the last scrape. Use this when the user asks to scrape, check, or pull
     their suggestion box / notes / ideas channel.
 
@@ -136,9 +128,10 @@ async def scrape_suggestion_box(tool_context: ToolContext) -> dict:
             "message": "No new messages in the suggestion box since last scrape.",
         }
 
-    # Format and append to file
-    _ensure_data_dir()
+    conn = _ensure_db()
+    cursor = conn.cursor()
     new_entries = []
+    
     for msg in messages:
         timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M")
         author = msg.author.display_name
@@ -149,8 +142,17 @@ async def scrape_suggestion_box(tool_context: ToolContext) -> dict:
         if not content:
             continue
 
-        entry = f"- [ ] **[{timestamp}]** {author}: {content}"
-        new_entries.append(entry)
+        try:
+            cursor.execute("""
+                INSERT INTO suggestions (channel_message_id, timestamp, author, content, status)
+                VALUES (?, ?, ?, ?, ?)
+            """, (msg.id, timestamp, author, content, 'PENDING'))
+            new_entries.append(content)
+        except sqlite3.IntegrityError:
+            pass # already in db
+
+    conn.commit()
+    conn.close()
 
     if not new_entries:
         return {
@@ -159,18 +161,8 @@ async def scrape_suggestion_box(tool_context: ToolContext) -> dict:
             "message": "No new text messages found (only bot messages or empty messages).",
         }
 
-    # Append to file
-    with open(SUGGESTION_FILE, "a", encoding="utf-8") as f:
-        f.write(f"\n## Scraped {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
-        for entry in new_entries:
-            f.write(entry + "\n")
-        f.write("\n")
-
     # Update cursor
     _set_last_scraped_id(messages[-1].id)
-
-    # Prune if too long
-    _prune_file()
 
     # Build preview (last 5 entries)
     preview = new_entries[-5:] if len(new_entries) > 5 else new_entries
@@ -178,43 +170,44 @@ async def scrape_suggestion_box(tool_context: ToolContext) -> dict:
     return {
         "status": "success",
         "new_messages": len(new_entries),
-        "file_path": SUGGESTION_FILE,
-        "message": f"Scraped {len(new_entries)} new message(s) from the suggestion box.",
+        "message": f"Scraped {len(new_entries)} new message(s) from the suggestion box into the database.",
         "preview": preview,
     }
 
 
 async def read_suggestion_box(tool_context: ToolContext) -> dict:
-    """Reads and returns the current contents of the suggestion box file.
+    """Reads and returns the current contents of the suggestion box database.
     Use this when the user wants to review, discuss, or go through their
     saved notes/ideas/suggestions.
 
     Returns:
-        A dictionary with the file contents.
+        A dictionary with the file contents formatted as a string.
     """
-    if not os.path.exists(SUGGESTION_FILE):
+    conn = _ensure_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, timestamp, author, content, status FROM suggestions ORDER BY id ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
         return {
             "status": "info",
-            "message": "The suggestion box is empty. No notes have been scraped yet.",
+            "message": "The suggestion box database is empty.",
             "contents": "",
         }
 
-    with open(SUGGESTION_FILE, encoding="utf-8") as f:
-        contents = f.read()
-
-    if not contents.strip():
-        return {
-            "status": "info",
-            "message": "The suggestion box file exists but is empty.",
-            "contents": "",
-        }
-
-    # Count entries
-    entry_count = contents.count("\n- **[")
+    # Format like a markdown list so the agent can read it naturally
+    lines = []
+    for row in rows:
+        db_id, timestamp, author, content, status = row
+        box = "[x]" if status == "DONE" else "[ ]"
+        lines.append(f"- {box} **[{timestamp}]** {author} (ID: {db_id}): {content}")
+        
+    contents = "\\n".join(lines)
 
     return {
         "status": "success",
-        "entry_count": entry_count,
+        "entry_count": len(rows),
         "contents": contents,
-        "file_path": SUGGESTION_FILE,
+        "message": f"Fetched {len(rows)} suggestions from the database.",
     }
