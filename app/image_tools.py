@@ -632,15 +632,18 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
                 
                 c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
-                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.1) % 1.0, 1, 1))
+                # Use a complementary hue for strong contrast
+                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))
                 c2_candidates = [c for c in riso_colors if c != c1]
                 c2 = min(c2_candidates, key=lambda c: color_distance_hue(c, target_rgb))
                 
                 c_dark, c_light = sorted([c1, c2], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
                 
+                # Convert to grayscale but keep the smooth tones for tone-mapping
                 layer_pil = Image.fromarray(img_array).convert("L")
-                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
+                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.2)
                 
+                # This applies a smooth gradient map (tone mapping)
                 processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light)
 
             elif mode == "riso_multiply":
