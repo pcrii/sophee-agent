@@ -599,6 +599,38 @@ async def execute_agent_turn(
             parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
             session_id=image_session_id,
         )
+        
+        # Tie image to the ADK history by appending a Markdown link to the last bot message
+        try:
+            import sqlite3, json, os
+            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, event_data FROM events 
+                WHERE session_id = ? AND user_id = ? 
+                ORDER BY timestamp DESC LIMIT 20
+            """, (session_id, user_id))
+            for row in cursor.fetchall():
+                event_id, event_data_str = row
+                try:
+                    event_data = json.loads(event_data_str)
+                    if event_data.get("author") not in ("user", "system") and event_data.get("author"):
+                        md_text = f"\n\n![image](/api/artifacts/{user_id}/{session_id}/{new_image_key})"
+                        if "content" in event_data and "parts" in event_data["content"]:
+                            parts = event_data["content"]["parts"]
+                            if parts and "text" in parts[-1]:
+                                parts[-1]["text"] += md_text
+                            else:
+                                parts.append({"text": md_text})
+                            cursor.execute("UPDATE events SET event_data = ? WHERE id = ?", (json.dumps(event_data), event_id))
+                            conn.commit()
+                        break
+                except Exception:
+                    pass
+            conn.close()
+        except Exception as e:
+            logger.error("Failed to link artifact to history in client: %s", e)
 
         # Send text response in an archived thread
         if response_text:

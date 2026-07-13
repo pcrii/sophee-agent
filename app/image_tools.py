@@ -30,7 +30,7 @@ async def generate_image(
     resolution: str = None,
     aspect_ratio: str = None,
     model: str = None,
-    edit_mode: str = "edit",
+    edit_mode: str = "reference",
     seed: int = None,
     temperature: float = None,
     enable_search_grounding: bool = False,
@@ -38,6 +38,8 @@ async def generate_image(
     """Generates OR edits a high-quality image based on a detailed text prompt.
     If the user uploads an image or requests an edit, ALWAYS use this tool.
     The tool automatically uses their latest uploaded/generated image as the reference.
+    By default, it uses 'reference' mode. If the user explicitly asks to 'edit', 'modify', or 'change' the image, set edit_mode='edit'.
+    If the user explicitly asks to 'reference' or 'use as inspiration', ensure edit_mode='reference'.
     Saves the output image to the user's artifacts (persistent across sessions).
 
     Args:
@@ -46,9 +48,9 @@ async def generate_image(
         aspect_ratio: Optional aspect ratio override (e.g. '1:1', '16:9', '9:16'). Intelligently choose based on subject if not specified.
         model: Optional model override. Do NOT pass unless explicitly requested.
         edit_mode: How to use a reference image if one exists:
-            - 'edit' (default): The reference IS the canvas. Modify only what the prompt specifies, preserve everything else exactly.
+            - 'reference' (default): The reference is pure inspiration/vibe only. Ignore its dimensions and details entirely. Generate fresh using the reference as a mood board.
             - 'reimagine': Use the reference's structure and subject as a guide, but freely reinterpret style, color, and atmosphere.
-            - 'reference': The reference is pure inspiration/vibe only. Ignore its dimensions and details entirely. Generate fresh using the reference as a mood board.
+            - 'edit': The reference IS the canvas. Modify only what the prompt specifies, preserve everything else exactly.
         seed: Optional integer seed for reproducibility. Same seed + same prompt = similar results.
         temperature: Optional creativity dial (0.0 = very literal, 1.0 = very creative). Uses model default if not set.
         enable_search_grounding: If true, enables Grounding with Google Search. Forces flash model.
