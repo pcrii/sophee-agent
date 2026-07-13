@@ -293,7 +293,9 @@ async def preprocess_image(
             - 'smart_crop': Intelligently crops to the main subject.
             - 'rembg': Removes the background.
             - 'remove_text': Uses AI to remove typography/text while preserving the scene.
-            - 'riso_pop': Applies a randomized, modern Risograph print aesthetic to the image.
+            - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
+            - 'riso_duotone': Applies a Risograph print aesthetic (Duotone style).
+            - 'riso_multiply': Applies a Risograph print aesthetic (Multiply style).
 
     Returns:
         A dict with status and the artifact name of the preprocessed image (shown to user as a preview).
@@ -301,6 +303,7 @@ async def preprocess_image(
     import base64
     import time
     from google.genai import types
+    import random
     
     latest_img = tool_context.state.get("latest_input_image")
     if not latest_img:
@@ -312,12 +315,15 @@ async def preprocess_image(
     try:
         raw_bytes = base64.b64decode(latest_img["data"])
         mode = mode.lower().strip()
+        
+        if mode == "riso_pop":
+            mode = random.choice(["riso_sticker", "riso_duotone", "riso_multiply"])
 
         processed_bytes = await preprocess_image_bytes(raw_bytes, mode)
         if not processed_bytes:
             return {
                 "status": "error",
-                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, remove_text, riso_pop.",
+                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, remove_text, riso_sticker, riso_duotone, riso_multiply.",
             }
 
         processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
