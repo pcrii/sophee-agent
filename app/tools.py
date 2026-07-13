@@ -775,7 +775,7 @@ async def start_radio_station(playlist_thesis: str, tool_context: ToolContext, m
         A dictionary containing the curated tracklist (or the resumed state), or an error if a station is already active.
     """
     from app.radio_state import is_station_active, resolve_guild_id, load_hibernated_radio
-    from bot.audio import get_user_favorites
+    from app.radio_orchestration import get_user_favorites
 
     # --- Station-active guard ---
     session = tool_context.session

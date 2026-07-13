@@ -27,6 +27,17 @@ now_playing_cache: dict[int, str] = {}
 # Discord client reference — set by bot/client.py at startup
 _discord_client = None
 
+# Registry for Discord voice tasks so app/ can trigger them without importing bot/
+_discord_callbacks = {}
+
+def register_discord_callbacks(**callbacks):
+    """Register Discord-specific functions (e.g. audio_player_task, build_radio_sequence)."""
+    _discord_callbacks.update(callbacks)
+
+def get_discord_callback(name: str):
+    """Get a registered Discord callback."""
+    return _discord_callbacks.get(name)
+
 
 def set_discord_client(client):
     """Called by bot/client.py to register the Discord client for guild lookups."""

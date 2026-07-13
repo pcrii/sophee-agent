@@ -7,6 +7,7 @@ import logging
 import random
 
 from google.adk.tools import ToolContext
+from app.db import session_service
 
 from app.radio_state import active_radios, now_playing_cache, resolve_guild_id
 from app.tools import (
@@ -397,21 +398,16 @@ async def change_radio_mode(mode: str, tool_context: ToolContext) -> dict:
     state["upcoming_tracks"] = []
     state["candidate_pool"] = []
 
-    # Import bot helpers
-    from bot.audio import persist_radio_state_helper, replenish_radio_queue
+    from app.radio_orchestration import persist_radio_state_helper, jit_replenish_queue
 
     # Run replenish_radio_queue to immediately fill the queue with 3 tracks matching the new algorithm
     try:
-        await replenish_radio_queue(state)
+        await jit_replenish_queue(state, channel=None)
     except Exception as e:
         logger.exception("Error replenishing queue during mode change:")
 
     # Persist state
-    from bot.client import session_service
-    import asyncio
-    guild_id = _resolve_guild(tool_context)
-    session_id = (tool_context.session.id if tool_context.session else "") 
-    channel_id_str = session_id.replace("discord_", "")
+    from app.radio_orchestration import jit_replenish_queue, persist_radio_state_helper
     try:
         channel_id = int(channel_id_str)
     except ValueError:
@@ -490,8 +486,8 @@ async def mutate_upcoming_queue(tool_context: ToolContext, chaotic: bool = False
     state["upcoming_tracks"] = mutated_tracks
 
     # Persist change
-    from bot.audio import persist_radio_state_helper
-    from bot.client import session_service
+    from app.radio_orchestration import persist_radio_state_helper
+
     import asyncio
     from app.radio_state import resolve_guild_id
 
@@ -543,8 +539,8 @@ async def toggle_radio_jit(enabled: bool, tool_context: ToolContext) -> dict:
     state["jit_enabled"] = enabled
 
     # Persist change
-    from bot.audio import persist_radio_state_helper
-    from bot.client import session_service
+    from app.radio_orchestration import persist_radio_state_helper
+
     import asyncio
 
     guild_id = _resolve_guild(tool_context)
@@ -610,9 +606,9 @@ async def resume_radio(tool_context: ToolContext) -> dict:
         A success message if the station was resumed, or an error if no hibernated state exists.
     """
     import asyncio
-    from app.radio_state import load_hibernated_radio, set_radio_state, get_discord_client
-    from bot.audio import audio_player_task, build_radio_sequence, persist_radio_state_helper
-    from bot.client import session_service
+    from app.radio_state import load_hibernated_radio, set_radio_state, get_discord_client, get_discord_callback
+    from app.radio_orchestration import persist_radio_state_helper
+
 
     guild_id = _resolve_guild(tool_context)
 
@@ -676,14 +672,23 @@ async def resume_radio(tool_context: ToolContext) -> dict:
     abort_event = asyncio.Event()
     audio_queue = asyncio.Queue(maxsize=3)
 
+    audio_player_task = get_discord_callback("audio_player_task")
+    build_radio_sequence = get_discord_callback("build_radio_sequence")
+    
+    if not audio_player_task or not build_radio_sequence:
+        return {
+            "status": "error",
+            "message": "Discord callbacks not registered. Cannot resume voice.",
+        }
+
     task1 = asyncio.create_task(
         audio_player_task(vc, audio_queue, text_channel, abort_event)
     )
     task2 = asyncio.create_task(
         build_radio_sequence(
-            audio_queue, use_dj, guild_id,
+            audio_queue, state.get("use_dj", False), guild_id,
             session_service, None,
-            text_channel_id, abort_event,
+            text_channel_id, abort_event
         )
     )
     for task in (task1, task2):

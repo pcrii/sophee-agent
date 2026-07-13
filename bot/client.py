@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from google.adk.artifacts import FileArtifactService
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
+from app.db import session_service
 from google.genai import types
 
 from app.agent import root_agent
@@ -46,7 +47,10 @@ logging.basicConfig(
 logger = logging.getLogger("sophee.bot.client")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0") or "0")
+try:
+    DISCORD_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0") or "0")
+except ValueError:
+    DISCORD_GUILD_ID = 0
 APP_NAME = "app"
 
 # ---------------------------------------------------------------------------
@@ -62,7 +66,7 @@ tree = app_commands.CommandTree(client)
 # ADK services
 # ---------------------------------------------------------------------------
 
-session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
+
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 artifacts_dir = os.path.join(project_root, "data", "artifacts")
 artifact_service = FileArtifactService(root_dir=artifacts_dir)

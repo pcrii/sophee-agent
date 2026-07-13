@@ -3,6 +3,7 @@
 import logging
 import discord
 from google.adk.tools import ToolContext
+from app.db import session_service
 
 logger = logging.getLogger("sophee.app.adventure_tools")
 
@@ -55,7 +56,7 @@ async def start_adventure(genre: str, character_concept: str = "", *, tool_conte
 
     # Initialize state for the thread's session ID
     thread_session_id = f"discord_{thread.id}"
-    from bot.client import session_service
+
 
     thread_session = await session_service.get_session(
         app_name="app", user_id=user_id, session_id=thread_session_id
@@ -185,7 +186,7 @@ async def update_adventure_state(
         updates["tension"] = new_tension
 
     # Save to database
-    from bot.client import session_service
+
     from google.adk.events import Event, EventActions
     import time
     import uuid
@@ -220,7 +221,7 @@ async def end_adventure(*, tool_context: ToolContext) -> dict:
     session.state["adventure_active"] = False
 
     # Save updated state to database
-    from bot.client import session_service
+
     from google.adk.events import Event, EventActions
     import time
     import uuid
