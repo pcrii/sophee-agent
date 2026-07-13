@@ -476,8 +476,118 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 rgba_array = _np.zeros((height, width, 4), dtype=_np.uint8)
                 rgba_array[:, :, :3] = img_array
                 rgba_array[:, :, 3] = mask2 * 255
-                
                 processed = Image.fromarray(rgba_array, "RGBA")
+
+        elif mode == "riso_pop":
+            from google import genai
+            import os
+            import json
+            import re
+            import random
+            import cv2
+            import numpy as _np
+            
+            api_key = os.getenv("GEMINI_API_KEY")
+            client = genai.Client(api_key=api_key)
+            
+            prompt = "Return a JSON list of 2D bounding boxes for up to 3 of the most prominent distinct subjects or objects in this image. Format: [[ymin, xmin, ymax, xmax], ...], normalized from 0 to 1000. Output ONLY the JSON list."
+            
+            import base64
+            b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+            interaction = await client.aio.interactions.create(
+                model="gemini-3.1-flash",
+                input=[
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                ],
+            )
+            
+            response_text = ""
+            for step in interaction.steps:
+                for block in step.model_turn.parts:
+                    if block.text:
+                        response_text += block.text
+            
+            match = re.search(r"\[\s*\[.*?\]\s*\]", response_text, re.DOTALL)
+            if not match:
+                raise ValueError(f"Could not parse bounding boxes from Gemini response: {response_text}")
+                
+            try:
+                boxes = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                raise ValueError(f"Invalid JSON from Gemini: {match.group(0)}")
+                
+            boxes = boxes[:3]  # Max 3 subjects
+            
+            width, height = pil_img.size
+            img_array = _np.array(pil_img.convert("RGB"))
+            
+            subject_masks = []
+            combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
+            
+            for box in boxes:
+                ymin, xmin, ymax, xmax = box
+                x1 = max(0, int((xmin / 1000) * width))
+                y1 = max(0, int((ymin / 1000) * height))
+                x2 = min(width, int((xmax / 1000) * width))
+                y2 = min(height, int((ymax / 1000) * height))
+                
+                rect = (x1, y1, x2 - x1, y2 - y1)
+                if rect[2] <= 0 or rect[3] <= 0:
+                    continue
+                    
+                mask = _np.zeros(img_array.shape[:2], _np.uint8)
+                bgdModel = _np.zeros((1, 65), _np.float64)
+                fgdModel = _np.zeros((1, 65), _np.float64)
+                
+                cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+                mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                
+                subject_masks.append(mask2)
+                combined_fg_mask = _np.maximum(combined_fg_mask, mask2)
+                
+            riso_colors = [
+                (0, 168, 225),   # Cyan
+                (230, 0, 126),   # Magenta
+                (255, 237, 0),   # Yellow
+                (255, 72, 176),  # Fluorescent Pink
+                (241, 80, 96),   # Bright Red
+                (130, 216, 213), # Mint
+                (118, 91, 167),  # Purple
+                (255, 108, 47),  # Orange
+                (60, 60, 60),    # Charcoal
+                (0, 120, 191),   # Blue
+                (0, 169, 92),    # Green
+            ]
+            random.shuffle(riso_colors)
+            bg_color = riso_colors[0]
+            
+            def create_dithered_layer(rgb_arr, mask_arr, color_tuple):
+                layer_rgb = rgb_arr.copy()
+                layer_rgb[mask_arr == 0] = [255, 255, 255]
+                layer_pil = Image.fromarray(layer_rgb).convert("L").convert("1").convert("L")
+                dither_arr = _np.array(layer_pil)
+                rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                rgba[dither_arr < 128] = [*color_tuple, 255]
+                rgba[dither_arr >= 128] = [0, 0, 0, 0]
+                return Image.fromarray(rgba, "RGBA")
+
+            bg_mask = 1 - combined_fg_mask
+            bg_layer = create_dithered_layer(img_array, bg_mask, bg_color)
+            
+            canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+            canvas.alpha_composite(bg_layer)
+            
+            for i, s_mask in enumerate(subject_masks):
+                s_color = riso_colors[(i + 1) % len(riso_colors)]
+                s_layer = create_dithered_layer(img_array, s_mask, s_color)
+                dx = random.randint(-4, 4)
+                dy = random.randint(-4, 4)
+                shifted = Image.new("RGBA", (width, height), (0,0,0,0))
+                shifted.paste(s_layer, (dx, dy))
+                canvas.alpha_composite(shifted)
+                
+            processed = canvas.convert("RGB")
 
         elif mode == "remove_text":
             from google import genai
