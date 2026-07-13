@@ -718,23 +718,15 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
                 
                 # Primary color
-                c1_distances = [(c, color_distance_hue(c, avg_rgb)) for c in riso_colors]
-                c1_distances.sort(key=lambda x: x[1])
-                c1 = random.choice([c[0] for c in c1_distances[:3]])
+                c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
                 
-                # Triadic 1
-                c2_candidates = [c for c in riso_colors if c != c1]
-                target_rgb_2 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.33) % 1.0, 1, 1))
-                c2_distances = [(c, color_distance_hue(c, target_rgb_2)) for c in c2_candidates]
-                c2_distances.sort(key=lambda x: x[1])
-                c2 = random.choice([c[0] for c in c2_distances[:2]])
+                # Analogous color (smooth blend for midtones)
+                target_rgb_2 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.15) % 1.0, 1, 1))
+                c2 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb_2) if c != c1 else 999)
                 
-                # Triadic 2
-                c3_candidates = [c for c in riso_colors if c not in (c1, c2)]
-                target_rgb_3 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.66) % 1.0, 1, 1))
-                c3_distances = [(c, color_distance_hue(c, target_rgb_3)) for c in c3_candidates]
-                c3_distances.sort(key=lambda x: x[1])
-                c3 = random.choice([c[0] for c in c3_distances[:2]])
+                # Complementary color (pop for highlights/shadows)
+                target_rgb_3 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))
+                c3 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb_3) if c not in (c1, c2) else 999)
                 
                 # Sort by luminance
                 c_dark, c_mid, c_light = sorted([c1, c2, c3], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
@@ -742,15 +734,25 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 layer_pil = Image.fromarray(img_array).convert("L")
                 layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.2)
                 
-                # 3-color tone map!
+                # 3-color tone map
                 processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light, mid=c_mid)
                 
-                # 3. Composite AI strokes
-                blend_arr = _np.full((height, width, 3), 128, dtype=_np.uint8)
-                blend_arr[edges > 128] = [255, 255, 255] # Dodge
-                
+                # 3. Composite AI strokes with a misregistered printing effect
                 from PIL import ImageChops
-                processed = ImageChops.overlay(processed, Image.fromarray(blend_arr, "RGB"))
+                edges_pil = Image.fromarray(edges)
+                
+                # Shift strokes slightly to simulate Riso print misregistration
+                dx, dy = random.randint(3, 8), random.randint(3, 8)
+                shifted_edges = ImageChops.offset(edges_pil, dx, dy)
+                
+                # Color the strokes using the brightest pop color
+                stroke_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                stroke_rgba[..., :3] = c_light
+                stroke_rgba[..., 3] = _np.array(shifted_edges)
+                
+                processed = processed.convert("RGBA")
+                processed.alpha_composite(Image.fromarray(stroke_rgba, "RGBA"))
+                processed = processed.convert("RGB")
 
             elif mode == "riso_multiply":
                 avg_rgb = get_dominant_color(img_array)
