@@ -390,12 +390,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 ],
             )
             
-            response_text = ""
-            for step in interaction.steps:
-                if hasattr(step, "model_turn") and step.model_turn:
-                    for block in step.model_turn.parts:
-                        if hasattr(block, "text") and block.text:
-                            response_text += block.text
+            response_text = getattr(interaction, "output_text", "") or ""
             
             match = re.search(r"\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]", response_text)
             if not match:
@@ -465,12 +460,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 ],
             )
             
-            response_text = ""
-            for step in interaction.steps:
-                if hasattr(step, "model_turn") and step.model_turn:
-                    for block in step.model_turn.parts:
-                        if hasattr(block, "text") and block.text:
-                            response_text += block.text
+            response_text = getattr(interaction, "output_text", "") or ""
             
             match = re.search(r"\[\s*\[.*?\]\s*\]", response_text, re.DOTALL)
             if not match:
