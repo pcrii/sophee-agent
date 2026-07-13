@@ -494,6 +494,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             width, height = pil_img.size
             img_array = _np.array(pil_img.convert("RGB"))
             subject_masks = []
+            combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
             
             for box in boxes:
                 ymin, xmin, ymax, xmax = box
@@ -505,7 +506,9 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 bgdModel = _np.zeros((1, 65), _np.float64)
                 fgdModel = _np.zeros((1, 65), _np.float64)
                 cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-                subject_masks.append(_np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8'))
+                mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                subject_masks.append(mask2)
+                combined_fg_mask = _np.maximum(combined_fg_mask, mask2)
                 
             riso_colors = [
                 (0, 168, 225), (230, 0, 126), (255, 237, 0), (255, 72, 176),
