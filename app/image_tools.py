@@ -568,20 +568,22 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                     bg_mask = 1 - combined_fg_mask
                     canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, None))
                 else: # riso_sticker_book
-                    # Multiply background with ink burns where stickers used to be
+                    # Bright mixed media! Off-white paper background
+                    bg_rgba = _np.full((height, width, 4), [250, 245, 240, 255], dtype=_np.uint8)
+                    canvas.alpha_composite(Image.fromarray(bg_rgba, "RGBA"))
+                    
+                    # Dither the background elements in a bright neon color
                     avg_bg_rgb = get_dominant_color(img_array, 1 - combined_fg_mask)
                     h, _, _ = colorsys.rgb_to_hsv(avg_bg_rgb[0]/255.0, avg_bg_rgb[1]/255.0, avg_bg_rgb[2]/255.0)
-                    bg_neon = min(riso_colors, key=lambda c: color_distance_hue(c, tuple(int(x*255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))))
+                    bg_neon = min(riso_colors, key=lambda c: color_distance_hue(c, tuple(int(x*255) for x in colorsys.hsv_to_rgb((h + 0.1) % 1.0, 1, 1))))
                     
-                    gray_arr = _np.array(Image.fromarray(img_array).convert("L").convert("RGB")).astype(_np.float32) / 255.0
-                    bg_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                    bg_rgba[..., :3] = (gray_arr * _np.array(bg_neon, dtype=_np.float32)).astype(_np.uint8)
+                    bg_mask = 1 - combined_fg_mask
+                    canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, bg_neon))
                     
-                    # Ink burn (darken where stickers were)
-                    burn_mask = combined_fg_mask == 1
-                    bg_rgba[burn_mask, :3] = (bg_rgba[burn_mask, :3] * 0.4).astype(_np.uint8)
-                    bg_rgba[..., 3] = 255
-                    canvas.alpha_composite(Image.fromarray(bg_rgba, "RGBA"))
+                    # Leave a soft colorful ink burn where the stickers were
+                    shadow_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                    shadow_rgba[combined_fg_mask == 1] = [*bg_neon, 60]
+                    canvas.alpha_composite(Image.fromarray(shadow_rgba, "RGBA"))
                 
                 for i, s_mask in enumerate(subject_masks):
                     avg_rgb = get_dominant_color(img_array, s_mask)
