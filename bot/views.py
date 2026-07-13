@@ -417,7 +417,7 @@ async def _run_agent_and_get_image(
             
         # Tie image to the ADK history by appending a Markdown link to the last bot message
         try:
-            import sqlite3, json, os
+            import sqlite3, json
             db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
