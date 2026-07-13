@@ -138,7 +138,7 @@ async function sendMessage() {
     }
 }
 
-function appendMessage(text, sender, artifacts = []) {
+function appendMessage(text, sender, artifacts = [], payload = null) {
     const msgDiv = document.createElement("div");
     msgDiv.className = `message ${sender}-msg`;
 
@@ -175,6 +175,23 @@ function appendMessage(text, sender, artifacts = []) {
     }
 
     msgDiv.appendChild(contentDiv);
+    
+    if (payload) {
+        const details = document.createElement("details");
+        details.className = "payload-details";
+        
+        const summary = document.createElement("summary");
+        summary.textContent = "View ADK Payload";
+        
+        const pre = document.createElement("pre");
+        pre.className = "payload-pre";
+        pre.textContent = JSON.stringify(payload, null, 2);
+        
+        details.appendChild(summary);
+        details.appendChild(pre);
+        msgDiv.appendChild(details);
+    }
+    
     chatHistory.appendChild(msgDiv);
     chatHistory.scrollTop = chatHistory.scrollHeight;
 }
@@ -221,7 +238,7 @@ async function loadActiveChat() {
                     </div>
                 `;
                 data.history.forEach(msg => {
-                    appendMessage(msg.text, msg.sender, msg.artifacts);
+                    appendMessage(msg.text, msg.sender, msg.artifacts, msg.payload);
                 });
             }
         }

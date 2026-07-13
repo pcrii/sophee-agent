@@ -247,9 +247,9 @@ def create_app():
                 
                 if text:
                     if author == "user":
-                        history.append({"sender": "user", "text": text, "artifacts": []})
+                        history.append({"sender": "user", "text": text, "artifacts": [], "payload": event_data})
                     elif author and author != "system":
-                        history.append({"sender": "bot", "text": text, "artifacts": []})
+                        history.append({"sender": "bot", "text": text, "artifacts": [], "payload": event_data})
             
             return {"status": "success", "history": history}
         except Exception as e:
