@@ -902,8 +902,6 @@ class ImageView(discord.ui.View):
                     "latest_resolution": ref_meta.get("resolution"),
                     "force_style_roll": False,
                     "start_fresh_image": True,
-                    "latest_input_image": None,
-                    "latest_input_image_artifact": None,
                 }
                 state_update.update(main_defaults)
                 await self.update_state_fn(self.user_id, active_session_id, state_update)
@@ -911,8 +909,6 @@ class ImageView(discord.ui.View):
                 state_update = {
                     "force_style_roll": False,
                     "start_fresh_image": True,
-                    "latest_input_image": None,
-                    "latest_input_image_artifact": None,
                 }
                 state_update.update(main_defaults)
                 await self.update_state_fn(self.user_id, active_session_id, state_update)
