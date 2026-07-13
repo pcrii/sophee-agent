@@ -166,6 +166,7 @@ Copy `.env.example` to `.env` and fill in your keys:
 DISCORD_TOKEN=your_discord_bot_token
 GEMINI_API_KEY=your_gemini_api_key
 LASTFM_KEY=your_lastfm_api_key
+SOPHEE_API_KEY=your_secret_api_key
 
 # Optional — Google Cloud OAuth for YouTube Music (!ytlogin scrobbling)
 # YOUTUBE_CLIENT_ID=your_gcp_client_id
@@ -187,6 +188,7 @@ python bot/client.py
 | Discord | Yes | Yes | [Discord Developer Portal](https://discord.com/developers) |
 | Gemini | Yes | Yes (free tier) | [Google AI Studio](https://aistudio.google.com/) |
 | Last.fm | Yes | Yes | [Last.fm API](https://www.last.fm/api/account/create) |
+| Sophee API | Yes | Yes | A custom string (e.g. `your_secret_api_key`) used to secure local API access |
 | MusicBrainz | No (automatic) | Yes | No key needed, just a User-Agent header |
 | YouTube Music | No | Yes | Unauthenticated by default. Add a Google Cloud OAuth Desktop App Client ID/Secret to enable `!ytlogin` for multi-user scrobbling/history sync |
 
