@@ -1160,7 +1160,8 @@ class BaseProcessView(discord.ui.View):
             label_map = {
                 "canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", 
                 "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_text": "📝 Remove Text", 
-                "riso_sticker": "🖨️ Riso Sticker", "riso_duotone": "🖨️ Riso Duotone", "riso_multiply": "🖨️ Riso Multiply"
+                "riso_sticker": "🖨️ Riso Sticker", "riso_duotone": "🖨️ Riso Duotone", "riso_multiply": "🖨️ Riso Multiply",
+                "riso_tritone": "🖨️ Riso Tritone", "riso_sticker_book": "🖨️ Sticker Book"
             }
             label = label_map.get(mode, mode.title())
             channel = self.source_message.channel

@@ -284,7 +284,7 @@ async def preprocess_image(
     - Create an abstract version before a style transfer
     - Chain preprocessing with generation: call this first, then call generate_image
     
-    IMPORTANT: For FINAL stylistic filters like the Riso modes ('riso_sticker', 'riso_duotone', 'riso_multiply'), do NOT call `generate_image` after. Just call this tool and stop, telling the user you've applied the filter!
+    IMPORTANT: For FINAL stylistic filters like the Riso modes ('riso_sticker', 'riso_duotone', 'riso_tritone', 'riso_multiply', 'riso_sticker_book'), do NOT call `generate_image` after. Just call this tool and stop, telling the user you've applied the filter!
 
     Args:
         mode: The preprocessing transform to apply:
@@ -321,13 +321,13 @@ async def preprocess_image(
         mode = mode.lower().strip()
         
         if mode == "riso_pop":
-            mode = random.choice(["riso_sticker", "riso_duotone", "riso_multiply"])
+            mode = random.choice(["riso_sticker", "riso_duotone", "riso_tritone", "riso_multiply", "riso_sticker_book"])
 
         processed_bytes = await preprocess_image_bytes(raw_bytes, mode)
         if not processed_bytes:
             return {
                 "status": "error",
-                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, remove_text, riso_sticker, riso_duotone, riso_multiply.",
+                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, remove_text, riso_sticker, riso_duotone, riso_tritone, riso_multiply, riso_sticker_book.",
             }
 
         processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
