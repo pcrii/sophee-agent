@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sophee Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Marked.js for markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- DOMPurify for sanitizing markdown HTML -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.3/purify.min.js"></script>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+
+    <!-- API Key Modal (Hidden by default) -->
+    <div id="api-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>Welcome to Sophee</h2>
+            <p>Please enter your API key to access the dashboard.</p>
+            <input type="password" id="api-key-input" placeholder="SOPHEE_API_KEY">
+            <button id="save-key-btn">Save & Enter</button>
+        </div>
+    </div>
+
+    <div class="app-container">
+        
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">Sophee</div>
+                <div class="status-indicator"></div>
+            </div>
+            
+            <nav class="tabs">
+                <button class="tab-btn active" data-target="chat">Chat</button>
+                <button class="tab-btn" data-target="suggestions">Suggestions</button>
+                <button class="tab-btn" data-target="favorites">Favorites</button>
+            </nav>
+
+            <div class="sidebar-content">
+                <!-- Suggestions List -->
+                <div id="suggestions-panel" class="panel hidden">
+                    <h3>Staged Ideas</h3>
+                    <ul id="suggestions-list" class="item-list">
+                        <li class="loading">Loading...</li>
+                    </ul>
+                    <button id="refresh-suggestions-btn" class="icon-btn" title="Refresh">↻ Refresh</button>
+                </div>
+
+                <!-- Favorites List -->
+                <div id="favorites-panel" class="panel hidden">
+                    <h3>Saved Tracks</h3>
+                    <ul id="favorites-list" class="item-list">
+                        <li class="loading">Loading...</li>
+                    </ul>
+                    <button id="refresh-favorites-btn" class="icon-btn" title="Refresh">↻ Refresh</button>
+                </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <button id="logout-btn" class="text-btn">Change API Key</button>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <div id="chat-history" class="chat-history">
+                <div class="message system-msg">
+                    <div class="msg-content">
+                        <strong>Sophee OS Dashboard Connected.</strong><br>
+                        Audio streams are still routed to Discord. All other interactions can occur here.
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-container">
+                <div class="input-wrapper">
+                    <textarea id="chat-input" placeholder="Message Sophee..." rows="1"></textarea>
+                    <button id="send-btn" class="send-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

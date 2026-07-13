@@ -43,7 +43,10 @@ def create_app():
     from google.adk.runners import Runner
     from app.agent import root_agent
 
-    app = FastAPI(title="Sophee Agent API", dependencies=[Depends(verify_api_key)])
+    app = FastAPI(title="Sophee Agent API")
+
+    from fastapi import APIRouter
+    api_router = APIRouter(dependencies=[Depends(verify_api_key)])
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     artifacts_dir = os.path.join(project_root, "data", "artifacts")
@@ -58,7 +61,7 @@ def create_app():
         artifact_service=artifact_service,
     )
 
-    @app.post("/api/chat")
+    @api_router.post("/api/chat")
     async def chat(request: ChatRequest):
         """Send a message to the agent and get the text response."""
         from google.genai import types
@@ -104,7 +107,7 @@ def create_app():
 
     from fastapi.responses import Response
 
-    @app.get("/api/artifacts/{user_id}/{session_id}/{filename}")
+    @api_router.get("/api/artifacts/{user_id}/{session_id}/{filename}")
     async def get_artifact(user_id: str, session_id: str, filename: str):
         """Returns the raw bytes of an artifact."""
         try:
@@ -123,7 +126,7 @@ def create_app():
             return {"status": "error", "message": str(e)}
 
 
-    @app.get("/api/suggestions")
+    @api_router.get("/api/suggestions")
     async def get_suggestions():
         """Returns the suggestions from the SQLite database."""
         import sqlite3
@@ -150,13 +153,13 @@ def create_app():
             return {"status": "error", "message": str(e)}
 
 
-    @app.post("/api/suggestions/update")
+    @api_router.post("/api/suggestions/update")
     async def update_suggestions(request: SuggestionsUpdateRequest):
         """Deprecated. Use the agent tools to manage suggestion status."""
         return {"status": "error", "message": "Suggestions are now managed via SQLite. Please use the agent tools to mark them as DONE."}
 
 
-    @app.get("/api/favorites")
+    @api_router.get("/api/favorites")
     async def get_favorites():
         """Returns the structured favorites data from user_favorites.json."""
         favorites_file = os.path.join(
@@ -173,7 +176,7 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    @app.get("/api/debug/sessions")
+    @api_router.get("/api/debug/sessions")
     async def list_debug_sessions():
         """Lists the most recently updated sessions from the database."""
         import sqlite3
@@ -205,7 +208,7 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    @app.get("/api/debug/session/{user_id}/{session_id}")
+    @api_router.get("/api/debug/session/{user_id}/{session_id}")
     async def get_debug_session(user_id: str, session_id: str):
         """Returns the full list of events for the specified session."""
         import sqlite3
@@ -242,7 +245,7 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    @app.get("/api/debug/last_image_payload")
+    @api_router.get("/api/debug/last_image_payload")
     async def get_last_image_payload():
         """Returns the debug info for the last image generation payload."""
         payload_file = os.path.join(
@@ -259,7 +262,7 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    @app.get("/api/debug/logs")
+    @api_router.get("/api/debug/logs")
     async def get_debug_logs(lines: int = 100):
         """Returns the last N lines of the systemd service logs."""
         import subprocess
@@ -305,7 +308,22 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+
+    app.include_router(api_router)
+
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import RedirectResponse
+    static_dir = os.path.join(project_root, "static")
+    os.makedirs(static_dir, exist_ok=True)
+    
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    @app.get("/")
+    async def root():
+        return RedirectResponse(url="/static/index.html")
+
     return app
+
 
 
 
