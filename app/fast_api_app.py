@@ -144,8 +144,7 @@ def create_app():
                 box = "[x]" if status == "DONE" else "[ ]"
                 lines.append(f"- {box} **[{timestamp}]** {author} (ID: {db_id}): {content}")
                 
-            contents = "
-".join(lines)
+            contents = "\\n".join(lines)
             return {"status": "success", "contents": contents}
         except sqlite3.OperationalError:
             return {"status": "info", "message": "No suggestions found.", "contents": ""}
