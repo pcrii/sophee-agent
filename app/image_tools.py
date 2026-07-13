@@ -648,11 +648,18 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 
                 # Add canny map overlay
                 import cv2
+                # Slightly blur to remove noise before edge detection
                 gray_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-                edges = cv2.Canny(gray_cv, threshold1=50, threshold2=150)
+                blurred = cv2.GaussianBlur(gray_cv, (5, 5), 0)
+                edges = cv2.Canny(blurred, threshold1=40, threshold2=120)
+                
+                # Dilate to make strokes thicker and fuller
+                kernel = _np.ones((2, 2), _np.uint8)
+                edges = cv2.dilate(edges, kernel, iterations=1)
                 
                 edges_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                edges_rgba[edges > 0] = [255, 255, 255, 255] # White strokes, transparent background
+                # Use the lighter palette color for strokes so it blends with the duotone theme but pops
+                edges_rgba[edges > 0] = [*c_light, 255]
                 
                 processed = processed.convert("RGBA")
                 processed.alpha_composite(Image.fromarray(edges_rgba, "RGBA"))
