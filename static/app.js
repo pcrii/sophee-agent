@@ -136,11 +136,10 @@ function appendMessage(text, sender, artifacts = []) {
         const cleanHtml = DOMPurify.sanitize(rawHtml);
         contentDiv.innerHTML = cleanHtml;
 
-        // Append artifacts (images)
         if (artifacts && artifacts.length > 0) {
             artifacts.forEach(filename => {
                 const img = document.createElement("img");
-                img.src = `/api/artifacts/${USER_ID}/${SESSION_ID}/${filename}`;
+                img.src = `/api/artifacts/${USER_ID}/${SESSION_ID}/${filename}?api_key=${apiKey}`;
                 img.className = "artifact-img";
                 img.alt = filename;
                 contentDiv.appendChild(img);

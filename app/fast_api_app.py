@@ -10,13 +10,18 @@ import os
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-async def verify_api_key(api_key_header: str = Security(api_key_header)):
+from fastapi import Query
+async def verify_api_key(
+    api_key_header: str = Security(api_key_header),
+    api_key_query: str = Query(None, alias="api_key")
+):
     expected_api_key = os.getenv("SOPHEE_API_KEY")
     if not expected_api_key:
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN, detail="Server API key not configured."
         )
-    if api_key_header != expected_api_key:
+    key_to_check = api_key_header or api_key_query
+    if key_to_check != expected_api_key:
         raise HTTPException(
             status_code=HTTP_403_FORBIDDEN, detail="Invalid API Key"
         )
