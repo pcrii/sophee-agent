@@ -456,68 +456,25 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 processed = Image.fromarray(rgba_array, "RGBA")
 
         elif mode.startswith("riso_"):
-            from google import genai
-            import os
-            import json
-            import re
-            import random
-            import cv2
             import numpy as _np
             import colorsys
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            client = genai.Client(api_key=api_key)
-            
-            prompt = (
-                "Analyze this image and find the main subjects or characters (up to 3). "
-                "For each subject, return a bounding box in the format [ymin, xmin, ymax, xmax]. "
-                "The coordinates must be integers from 0 to 1000. "
-                "Return ONLY a JSON list of lists, e.g. [[ymin, xmin, ymax, xmax], [ymin, xmin, ymax, xmax]]."
-            )
-            
-            import base64
-            b64_data = base64.b64encode(raw_bytes).decode("utf-8")
-            interaction = await client.aio.interactions.create(
-                model="gemini-3.1-flash-lite",
-                input=[
-                    {"type": "text", "text": prompt},
-                    {"type": "image", "data": b64_data, "mime_type": "image/png"}
-                ],
-            )
-            
-            response_text = getattr(interaction, "output_text", "") or ""
-            match = re.search(r"\[\s*\[.*?\]\s*\]", response_text, re.DOTALL)
-            if not match:
-                raise ValueError(f"Could not parse bounding boxes from Gemini response: {response_text}")
-                
-            boxes = json.loads(match.group(0))[:3]
+            from PIL import ImageEnhance
+
             width, height = pil_img.size
             img_array = _np.array(pil_img.convert("RGB"))
-            subject_masks = []
-            combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
             
-            for box in boxes:
-                ymin, xmin, ymax, xmax = box
-                x1, y1 = max(0, int((xmin / 1000) * width)), max(0, int((ymin / 1000) * height))
-                x2, y2 = min(width, int((xmax / 1000) * width)), min(height, int((ymax / 1000) * height))
-                rect = (x1, y1, x2 - x1, y2 - y1)
-                if rect[2] <= 0 or rect[3] <= 0: continue
-                mask = _np.zeros(img_array.shape[:2], _np.uint8)
-                bgdModel = _np.zeros((1, 65), _np.float64)
-                fgdModel = _np.zeros((1, 65), _np.float64)
-                cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-                mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-                subject_masks.append(mask2)
-                combined_fg_mask = _np.maximum(combined_fg_mask, mask2)
-                
             riso_colors = [
                 (0, 168, 225), (230, 0, 126), (255, 237, 0), (255, 72, 176),
                 (241, 80, 96), (130, 216, 213), (118, 91, 167), (255, 108, 47),
                 (60, 60, 60), (0, 120, 191), (0, 169, 92)
             ]
             
-            def get_dominant_color(rgb_arr, mask_arr):
-                fg_pixels = rgb_arr[mask_arr == 1]
+            def get_dominant_color(rgb_arr, mask_arr=None):
+                if mask_arr is not None:
+                    fg_pixels = rgb_arr[mask_arr == 1]
+                else:
+                    indices = _np.random.choice(rgb_arr.shape[0] * rgb_arr.shape[1], size=min(10000, rgb_arr.shape[0]*rgb_arr.shape[1]), replace=False)
+                    fg_pixels = rgb_arr.reshape(-1, 3)[indices]
                 if len(fg_pixels) == 0: return (128, 128, 128)
                 avg = _np.mean(fg_pixels, axis=0)
                 return (int(avg[0]), int(avg[1]), int(avg[2]))
@@ -527,31 +484,78 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 h2, _, _ = colorsys.rgb_to_hsv(rgb2[0]/255.0, rgb2[1]/255.0, rgb2[2]/255.0)
                 diff = abs(h1 - h2)
                 return min(diff, 1.0 - diff)
-            
-            def create_dithered_layer(rgb_arr, mask_arr, color_tuple=None):
-                layer_rgb = rgb_arr.copy()
-                layer_rgb[mask_arr == 0] = [255, 255, 255]
-                layer_pil = Image.fromarray(layer_rgb).convert("L")
-                from PIL import ImageEnhance
-                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
-                dither_arr = _np.array(layer_pil)
-                rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                if color_tuple is None:
-                    rgba[dither_arr < 128] = [20, 20, 20, 255]
-                else:
-                    rgba[dither_arr < 128] = [*color_tuple, 255]
-                return Image.fromarray(rgba, "RGBA")
-            
-            bg_mask = 1 - combined_fg_mask
-            
-            canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
-            canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, None))
-            
-            for i, s_mask in enumerate(subject_masks):
-                avg_rgb = get_dominant_color(img_array, s_mask)
-                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
                 
-                if mode == "riso_sticker":
+            if mode == "riso_sticker":
+                from google import genai
+                import os
+                import json
+                import re
+                import cv2
+                
+                api_key = os.getenv("GEMINI_API_KEY")
+                client = genai.Client(api_key=api_key)
+                
+                prompt = (
+                    "Analyze this image and find the main subjects or characters (up to 3). "
+                    "For each subject, return a bounding box in the format [ymin, xmin, ymax, xmax]. "
+                    "The coordinates must be integers from 0 to 1000. "
+                    "Return ONLY a JSON list of lists, e.g. [[ymin, xmin, ymax, xmax], [ymin, xmin, ymax, xmax]]."
+                )
+                
+                import base64
+                b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+                interaction = await client.aio.interactions.create(
+                    model="gemini-3.1-flash-lite",
+                    input=[
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                    ],
+                )
+                
+                response_text = getattr(interaction, "output_text", "") or ""
+                match = re.search(r"\[\s*\[.*?\]\s*\]", response_text, re.DOTALL)
+                if not match:
+                    raise ValueError(f"Could not parse bounding boxes from Gemini response: {response_text}")
+                    
+                boxes = json.loads(match.group(0))[:3]
+                subject_masks = []
+                combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
+                
+                for box in boxes:
+                    ymin, xmin, ymax, xmax = box
+                    x1, y1 = max(0, int((xmin / 1000) * width)), max(0, int((ymin / 1000) * height))
+                    x2, y2 = min(width, int((xmax / 1000) * width)), min(height, int((ymax / 1000) * height))
+                    rect = (x1, y1, x2 - x1, y2 - y1)
+                    if rect[2] <= 0 or rect[3] <= 0: continue
+                    mask = _np.zeros(img_array.shape[:2], _np.uint8)
+                    bgdModel = _np.zeros((1, 65), _np.float64)
+                    fgdModel = _np.zeros((1, 65), _np.float64)
+                    cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+                    mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                    subject_masks.append(mask2)
+                    combined_fg_mask = _np.maximum(combined_fg_mask, mask2)
+                    
+                def create_dithered_layer(rgb_arr, mask_arr, color_tuple=None):
+                    layer_rgb = rgb_arr.copy()
+                    layer_rgb[mask_arr == 0] = [255, 255, 255]
+                    layer_pil = Image.fromarray(layer_rgb).convert("L")
+                    layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
+                    dither_arr = _np.array(layer_pil)
+                    rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                    if color_tuple is None:
+                        rgba[dither_arr < 128] = [20, 20, 20, 255]
+                    else:
+                        rgba[dither_arr < 128] = [*color_tuple, 255]
+                    return Image.fromarray(rgba, "RGBA")
+                    
+                bg_mask = 1 - combined_fg_mask
+                canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+                canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, None))
+                
+                for i, s_mask in enumerate(subject_masks):
+                    avg_rgb = get_dominant_color(img_array, s_mask)
+                    h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
+                    
                     target_hue = (h + 0.5) % 1.0
                     target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
                     s_color = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb))
@@ -560,36 +564,39 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                     canvas.alpha_composite(Image.fromarray(sticker_bg, "RGBA"))
                     canvas.alpha_composite(create_dithered_layer(img_array, s_mask, (20, 20, 20)))
                     
-                elif mode == "riso_duotone":
-                    c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
-                    target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.1) % 1.0, 1, 1))
-                    c2_candidates = [c for c in riso_colors if c != c1]
-                    c2 = min(c2_candidates, key=lambda c: color_distance_hue(c, target_rgb))
-                    c_dark, c_light = sorted([c1, c2], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
-                    
-                    layer_rgb = img_array.copy()
-                    layer_rgb[s_mask == 0] = [255, 255, 255]
-                    
-                    from PIL import ImageEnhance
-                    layer_pil = Image.fromarray(layer_rgb).convert("L")
-                    layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
-                    dither_1 = _np.array(layer_pil)
-                    
-                    rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                    rgba[(dither_1 < 128) & (s_mask == 1)] = [*c_dark, 255]
-                    rgba[(dither_1 >= 128) & (s_mask == 1)] = [*c_light, 255]
-                    canvas.alpha_composite(Image.fromarray(rgba, "RGBA"))
-                    
-                elif mode == "riso_multiply":
-                    c_neon = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
-                    layer_rgb = img_array.copy()
-                    layer_rgb[s_mask == 0] = [255, 255, 255]
-                    gray_arr = _np.array(Image.fromarray(layer_rgb).convert("L").convert("RGB")).astype(_np.float32) / 255.0
-                    rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                    rgba[..., :3] = (gray_arr * _np.array(c_neon, dtype=_np.float32)).astype(_np.uint8)
-                    rgba[..., 3] = s_mask * 255
-                    canvas.alpha_composite(Image.fromarray(rgba, "RGBA"))
-            processed = canvas.convert("RGB")
+                processed = canvas.convert("RGB")
+                
+            elif mode == "riso_duotone":
+                avg_rgb = get_dominant_color(img_array)
+                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
+                
+                c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
+                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.1) % 1.0, 1, 1))
+                c2_candidates = [c for c in riso_colors if c != c1]
+                c2 = min(c2_candidates, key=lambda c: color_distance_hue(c, target_rgb))
+                
+                c_dark, c_light = sorted([c1, c2], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
+                
+                layer_pil = Image.fromarray(img_array).convert("L")
+                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
+                
+                processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light)
+
+            elif mode == "riso_multiply":
+                avg_rgb = get_dominant_color(img_array)
+                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
+                
+                target_hue = (h + 0.5) % 1.0
+                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
+                c_neon = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb))
+                
+                gray_arr = _np.array(Image.fromarray(img_array).convert("L").convert("RGB")).astype(_np.float32) / 255.0
+                
+                rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
+                rgba[..., :3] = (gray_arr * _np.array(c_neon, dtype=_np.float32)).astype(_np.uint8)
+                rgba[..., 3] = 255
+                
+                processed = Image.fromarray(rgba, "RGBA").convert("RGB")
 
         elif mode == "remove_text":
             from google import genai
