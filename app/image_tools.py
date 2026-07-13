@@ -657,13 +657,15 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 kernel = _np.ones((2, 2), _np.uint8)
                 edges = cv2.dilate(edges, kernel, iterations=1)
                 
-                edges_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                # Use the lighter palette color for strokes so it blends with the duotone theme but pops
-                edges_rgba[edges > 0] = [*c_light, 255]
+                # Create a dynamic blend layer instead of a solid color
+                # 128 (50% gray) does nothing in Overlay blend mode. 
+                # 255 (white) dodges/brightens the underlying color. 0 (black) burns/darkens.
+                # We'll use white for the stroke to dynamically dodge the duotone colors underneath!
+                blend_arr = _np.full((height, width, 3), 128, dtype=_np.uint8)
+                blend_arr[edges > 0] = [255, 255, 255] 
                 
-                processed = processed.convert("RGBA")
-                processed.alpha_composite(Image.fromarray(edges_rgba, "RGBA"))
-                processed = processed.convert("RGB")
+                from PIL import ImageChops
+                processed = ImageChops.overlay(processed, Image.fromarray(blend_arr, "RGB"))
 
             elif mode == "riso_multiply":
                 avg_rgb = get_dominant_color(img_array)
