@@ -12,10 +12,13 @@ import hashlib
 import logging
 import os
 import time
+from io import BytesIO
+from typing import Any
 
 from google import genai
 from google.adk.tools import ToolContext
 from google.genai import types
+from PIL import Image, ImageFilter, ImageOps
 
 logger = logging.getLogger("sophee.app.image_tools")
 
