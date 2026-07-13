@@ -134,7 +134,18 @@ function appendMessage(text, sender, artifacts = []) {
     if (sender === "bot") {
         const rawHtml = marked.parse(text);
         const cleanHtml = DOMPurify.sanitize(rawHtml);
-        contentDiv.innerHTML = cleanHtml;
+        
+        const tempDiv = document.createElement("div");
+        tempDiv.innerHTML = cleanHtml;
+        const images = tempDiv.querySelectorAll("img");
+        images.forEach(img => {
+            const srcAttr = img.getAttribute("src");
+            if (srcAttr && srcAttr.startsWith("/api/artifacts/")) {
+                img.setAttribute("src", srcAttr + (srcAttr.includes("?") ? "&" : "?") + `api_key=${apiKey}`);
+                img.className = "artifact-img";
+            }
+        });
+        contentDiv.innerHTML = tempDiv.innerHTML;
 
         if (artifacts && artifacts.length > 0) {
             artifacts.forEach(filename => {
