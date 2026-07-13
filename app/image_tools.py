@@ -406,19 +406,13 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
     try:
         pil_img = Image.open(_io.BytesIO(raw_bytes))
 
-        if mode == "rembg":
-            import rembg
-            output_bytes = rembg.remove(raw_bytes)
-            processed = Image.open(_io.BytesIO(output_bytes)).convert("RGBA")
-
-        elif mode == "smart_crop":
+        if mode in ("rembg", "smart_crop"):
             # Use Gemini 3.1 Flash to get bounding box of main subject
             from google import genai
             import os
             import json
             import re
             
-            # Since preprocess_image_bytes doesn't have tool_context, we initialize a raw client
             api_key = os.getenv("GEMINI_API_KEY")
             client = genai.Client(api_key=api_key)
             
@@ -440,7 +434,6 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                     if block.text:
                         response_text += block.text
             
-            # Extract JSON list using regex
             match = re.search(r"\[\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\]", response_text)
             if not match:
                 raise ValueError(f"Could not parse bounding box from Gemini response: {response_text}")
@@ -449,14 +442,42 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             ymin, xmin, ymax, xmax = box
             
             width, height = pil_img.size
-            crop_box = (
-                int((xmin / 1000) * width),
-                int((ymin / 1000) * height),
-                int((xmax / 1000) * width),
-                int((ymax / 1000) * height),
-            )
+            x1 = int((xmin / 1000) * width)
+            y1 = int((ymin / 1000) * height)
+            x2 = int((xmax / 1000) * width)
+            y2 = int((ymax / 1000) * height)
             
-            processed = pil_img.crop(crop_box)
+            # Ensure valid rectangle
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(width, x2), min(height, y2)
+            
+            if mode == "smart_crop":
+                processed = pil_img.crop((x1, y1, x2, y2))
+            
+            elif mode == "rembg":
+                import cv2
+                import numpy as _np
+                
+                img_array = _np.array(pil_img.convert("RGB"))
+                mask = _np.zeros(img_array.shape[:2], _np.uint8)
+                bgdModel = _np.zeros((1, 65), _np.float64)
+                fgdModel = _np.zeros((1, 65), _np.float64)
+                
+                rect = (x1, y1, x2 - x1, y2 - y1)
+                
+                # If rectangle is invalid, fallback to full image
+                if rect[2] <= 0 or rect[3] <= 0:
+                    rect = (1, 1, width - 2, height - 2)
+                    
+                cv2.grabCut(img_array, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+                mask2 = _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+                
+                # Create RGBA image
+                rgba_array = _np.zeros((height, width, 4), dtype=_np.uint8)
+                rgba_array[:, :, :3] = img_array
+                rgba_array[:, :, 3] = mask2 * 255
+                
+                processed = Image.fromarray(rgba_array, "RGBA")
 
         elif mode == "canny":
             pil_img = pil_img.convert("RGB")

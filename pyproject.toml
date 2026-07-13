@@ -16,7 +16,6 @@ dependencies = [
     "Pillow",
     "numpy",
     "opencv-python-headless",
-    "rembg",
 ]
 
 [project.optional-dependencies]
