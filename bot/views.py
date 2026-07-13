@@ -936,6 +936,22 @@ class ImageView(discord.ui.View):
                     "force_style_roll": False,
                     "start_fresh_image": True,
                 }
+                
+                parent_artifact = ref_meta.get("parent_image_artifact")
+                if parent_artifact:
+                    try:
+                        import base64
+                        part = await self.artifact_service.load_artifact(
+                            app_name="app", user_id=self.user_id, session_id=active_session_id, filename=parent_artifact
+                        )
+                        if part and part.inline_data:
+                            encoded = base64.b64encode(part.inline_data.data).decode("utf-8")
+                            state_update["latest_input_image"] = {"data": encoded, "mime_type": part.inline_data.mime_type or "image/png"}
+                            state_update["latest_input_image_artifact"] = parent_artifact
+                            state_update["start_fresh_image"] = False  # Grounding overrides fresh start
+                    except Exception as e:
+                        logger.error("Failed to load parent artifact for reroll: %s", e)
+
                 state_update.update(main_defaults)
                 await self.update_state_fn(self.user_id, active_session_id, state_update)
             else:
