@@ -283,6 +283,8 @@ async def preprocess_image(
     - Strip away texture/detail before reimagining ('trace this', 'outline this', 'use the structure of')
     - Create an abstract version before a style transfer
     - Chain preprocessing with generation: call this first, then call generate_image
+    
+    IMPORTANT: For FINAL stylistic filters like the Riso modes ('riso_sticker', 'riso_duotone', 'riso_multiply'), do NOT call `generate_image` after. Just call this tool and stop, telling the user you've applied the filter!
 
     Args:
         mode: The preprocessing transform to apply:
