@@ -224,7 +224,7 @@ def create_app():
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT timestamp, event_type, event_data
+                SELECT timestamp, event_data
                 FROM events
                 WHERE user_id = ? AND session_id = ?
                 ORDER BY timestamp ASC
@@ -234,28 +234,22 @@ def create_app():
             
             history = []
             for row in rows:
-                timestamp, event_type, event_data_raw = row
+                timestamp, event_data_raw = row
                 try:
                     event_data = json.loads(event_data_raw)
                 except Exception:
                     continue
-                    
-                if event_type == "input":
-                    content = event_data.get("content", {})
-                    parts = content.get("parts", [])
-                    text = "".join([p.get("text", "") for p in parts if "text" in p])
-                    if text:
+                
+                author = event_data.get("author", "")
+                content = event_data.get("content", {})
+                parts = content.get("parts", [])
+                text = "".join([p.get("text", "") for p in parts if "text" in p])
+                
+                if text:
+                    if author == "user":
                         history.append({"sender": "user", "text": text, "artifacts": []})
-                elif event_type == "output":
-                    content = event_data.get("content", {})
-                    parts = content.get("parts", [])
-                    text = "".join([p.get("text", "") for p in parts if "text" in p])
-                    
-                    artifacts = []
-                    # Check for created artifacts in state update if any.
-                    # A more robust way is to just find images in the text since we added DOM parsing.
-                    if text:
-                        history.append({"sender": "bot", "text": text, "artifacts": artifacts})
+                    elif author and author != "system":
+                        history.append({"sender": "bot", "text": text, "artifacts": []})
             
             return {"status": "success", "history": history}
         except Exception as e:
