@@ -1069,6 +1069,28 @@ class ImageView(discord.ui.View):
 # Post-Process View
 # ---------------------------------------------------------------------------
 
+class ProcessResultView(discord.ui.View):
+    def __init__(self, original_message_id: int, mode: str, user_id: str, session_id: str, session_service, update_state_fn):
+        super().__init__(timeout=None)
+        self.original_message_id = original_message_id
+        self.mode = mode
+        self.user_id = user_id
+        self.session_id = session_id
+        self.session_service = session_service
+        self.update_state_fn = update_state_fn
+
+    @discord.ui.button(label="🎲 Reroll Process", style=discord.ButtonStyle.secondary)
+    async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        channel = interaction.channel
+        try:
+            original_message = await channel.fetch_message(self.original_message_id)
+        except Exception:
+            await interaction.response.send_message("❌ Original image lost.", ephemeral=True)
+            return
+        
+        view = PostProcessView(original_message, self.user_id, self.session_id, self.update_state_fn, self.session_service)
+        await view._apply_and_post(interaction, self.mode)
+
 class PostProcessView(discord.ui.View):
     """Ephemeral panel attached to an image message that lets the user apply
     PIL/OpenCV pre-processing transforms. Result is re-posted and stored as
@@ -1094,7 +1116,7 @@ class PostProcessView(discord.ui.View):
         return None, None
 
     async def _apply_and_post(self, interaction: discord.Interaction, mode: str):
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(thinking=True, ephemeral=False)
         try:
             raw_bytes, mime = await self._get_image_bytes()
             if not raw_bytes:
@@ -1120,11 +1142,22 @@ class PostProcessView(discord.ui.View):
             label_map = {"canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_text": "📝 Remove Text", "riso_pop": "🖨️ Riso Pop"}
             label = label_map.get(mode, mode.title())
             channel = self.source_message.channel
-            await channel.send(
-                content=f"**{label}** — reference image updated. Your next prompt will edit this.",
-                file=discord.File(io.BytesIO(result_bytes), filename=f"processed_{mode}.png"),
+            
+            result_view = ProcessResultView(
+                original_message_id=self.source_message.id,
+                mode=mode,
+                user_id=self.user_id,
+                session_id=self.session_id,
+                session_service=self.session_service,
+                update_state_fn=self.update_state_fn
             )
-            await interaction.followup.send(f"✅ Applied **{label}**. Your session now uses this as the edit base.", ephemeral=True)
+            
+            await channel.send(
+                content=f"✅ **{label}** applied. Your next prompt will edit this image.",
+                file=discord.File(io.BytesIO(result_bytes), filename=f"processed_{mode}.png"),
+                view=result_view
+            )
+            await interaction.followup.send(f"✅ Applied **{label}**.", ephemeral=True)
 
         except Exception as e:
             logger.error("PostProcessView error (%s): %s", mode, e)
