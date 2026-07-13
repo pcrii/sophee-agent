@@ -287,10 +287,18 @@ async def preprocess_image(
             - 'sketch': Pencil sketch effect. Removes texture, keeps line work.
             - 'posterize': Reduce color complexity. Keeps shapes, removes noise and fine detail.
             - 'blur': Heavy Gaussian blur. Very abstract canvas — loose vibe reference.
+            - 'smart_crop': Intelligently crops to the main subject.
+            - 'rembg': Removes the background.
+            - 'remove_text': Uses AI to remove typography/text while preserving the scene.
+            - 'riso_pop': Applies a randomized, modern Risograph print aesthetic to the image.
 
     Returns:
         A dict with status and the artifact name of the preprocessed image (shown to user as a preview).
     """
+    import base64
+    import time
+    from google.genai import types
+    
     latest_img = tool_context.state.get("latest_input_image")
     if not latest_img:
         return {
@@ -299,96 +307,47 @@ async def preprocess_image(
         }
 
     try:
-        from PIL import Image, ImageFilter, ImageOps
-        import io
-        import numpy as np
-    except ImportError as e:
-        return {"status": "error", "message": f"Missing image processing dependency: {e}"}
+        raw_bytes = base64.b64decode(latest_img["data"])
+        mode = mode.lower().strip()
 
-    raw_bytes = base64.b64decode(latest_img["data"])
-    pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-    mode = mode.lower().strip()
-
-    try:
-        if mode == "canny":
-            try:
-                import cv2
-            except ImportError:
-                return {
-                    "status": "error",
-                    "message": "opencv-python-headless is not installed. Run: uv add opencv-python-headless",
-                }
-            arr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-            gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
-            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-            edges = cv2.Canny(blurred, 50, 150)
-            # Invert: white background, black edges (friendlier canvas for the image model)
-            edges_inv = cv2.bitwise_not(edges)
-            processed = Image.fromarray(edges_inv).convert("RGB")
-
-        elif mode == "sketch":
-            # Pencil sketch: grayscale -> invert -> blur -> dodge blend
-            import numpy as np
-
-            gray = pil_img.convert("L")
-            inverted = ImageOps.invert(gray)
-            blurred = inverted.filter(ImageFilter.GaussianBlur(radius=10))
-            gray_arr = np.array(gray, dtype=np.float32)
-            blur_arr = np.array(blurred, dtype=np.float32)
-            sketch_arr = np.clip(
-                (gray_arr * 255.0) / (255.0 - blur_arr + 1e-6), 0, 255
-            ).astype(np.uint8)
-            processed = Image.fromarray(sketch_arr).convert("RGB")
-
-        elif mode == "posterize":
-            processed = ImageOps.posterize(pil_img, bits=3)
-
-        elif mode == "blur":
-            processed = pil_img.filter(ImageFilter.GaussianBlur(radius=12))
-
-        else:
+        processed_bytes = await preprocess_image_bytes(raw_bytes, mode)
+        if not processed_bytes:
             return {
                 "status": "error",
-                "message": f"Unknown mode '{mode}'. Valid options: canny, sketch, posterize, blur.",
+                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, remove_text, riso_pop.",
             }
+
+        processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
+
+        # Replace the session reference image with the processed version
+        tool_context.state["latest_input_image"] = {
+            "data": processed_b64,
+            "mime_type": "image/png",
+        }
+
+        # Save as artifact so Discord shows the preprocessing result as a preview
+        part = types.Part(
+            inline_data=types.Blob(data=processed_bytes, mime_type="image/png")
+        )
+        artifact_name = f"user:preprocessed_{mode}_{int(time.time())}.png"
+        try:
+            await tool_context.save_artifact(artifact_name, part)
+        except Exception as save_err:
+            logger.error("Failed to save preprocessed artifact: %s", save_err)
+
+        return {
+            "status": "success",
+            "artifact_name": artifact_name,
+            "message": (
+                f"Image preprocessed with '{mode}' mode and set as the active reference. "
+                "Call generate_image to continue."
+            ),
+            "mode": mode,
+        }
 
     except Exception as e:
         logger.error("Preprocessing error (mode=%s): %s", mode, e)
         return {"status": "error", "message": f"Preprocessing failed: {e}"}
-
-    # Encode back to JPEG bytes
-    import io
-
-    buf = io.BytesIO()
-    processed.save(buf, format="JPEG", quality=90)
-    processed_bytes = buf.getvalue()
-    processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
-
-    # Replace the session reference image with the processed version
-    tool_context.state["latest_input_image"] = {
-        "data": processed_b64,
-        "mime_type": "image/jpeg",
-    }
-
-    # Save as artifact so Discord shows the preprocessing result as a preview
-    part = types.Part(
-        inline_data=types.Blob(data=processed_bytes, mime_type="image/jpeg")
-    )
-    artifact_name = f"user:preprocessed_{mode}_{int(time.time())}.jpeg"
-    try:
-        await tool_context.save_artifact(artifact_name, part)
-    except Exception as save_err:
-        logger.error("Failed to save preprocessed artifact: %s", save_err)
-
-    return {
-        "status": "success",
-        "artifact_name": artifact_name,
-        "message": (
-            f"Image preprocessed with '{mode}' mode and set as the active reference. "
-            "Call generate_image to continue."
-        ),
-        "mode": mode,
-    }
 
 
 async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
