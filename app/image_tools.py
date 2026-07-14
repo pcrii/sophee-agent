@@ -690,62 +690,80 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 from google import genai
                 import os
                 import base64
+                import cv2
+                import asyncio
                 
-                # 1. Ask Gemini for AI-generated line art
                 api_key = os.getenv("GEMINI_API_KEY")
                 client = genai.Client(api_key=api_key)
                 b64_data = base64.b64encode(raw_bytes).decode("utf-8")
                 
-                interaction = await client.aio.interactions.create(
-                    model="gemini-3.1-flash-image",
-                    input=[
-                        {"type": "text", "text": "Redraw this image as a minimalist, continuous line-art drawing. Use clean, smooth, abstract strokes. Solid white lines on a pure black background. No shading."},
-                        {"type": "image", "data": b64_data, "mime_type": "image/png"}
-                    ],
-                )
+                # 1. Generate Local Canny Map
+                gray_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                blurred = cv2.GaussianBlur(gray_cv, (5, 5), 0)
+                edges_local = cv2.Canny(blurred, threshold1=40, threshold2=120)
+                _, buffer = cv2.imencode('.png', edges_local)
+                edges_b64 = base64.b64encode(buffer).decode("utf-8")
                 
-                generated_image = interaction.output_image
-                if not generated_image:
-                    raise RuntimeError("Gemini failed to generate line art")
+                # 2. Async API calls for Masking and Tracing
+                async def get_mask():
+                    return await client.aio.interactions.create(
+                        model="gemini-3.1-flash-image",
+                        input=[
+                            {"type": "text", "text": "Output a pure black and white silhouette mask where the foreground subject is solid white and the background is pure black."},
+                            {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                        ],
+                    )
+
+                async def get_trace():
+                    return await client.aio.interactions.create(
+                        model="gemini-3.1-flash-image",
+                        input=[
+                            {"type": "text", "text": "Redraw this edge map as a minimalist, continuous ink line-art drawing. Use clean, smooth, abstract strokes. Solid white lines on a pure black background. No shading."},
+                            {"type": "image", "data": edges_b64, "mime_type": "image/png"}
+                        ],
+                    )
+                    
+                mask_interaction, trace_interaction = await asyncio.gather(get_mask(), get_trace())
                 
-                output_bytes = base64.b64decode(generated_image.data)
-                ai_lines_pil = Image.open(io.BytesIO(output_bytes)).convert("L").resize((width, height))
-                import numpy as _np
+                # Decode Mask
+                mask_bytes = base64.b64decode(mask_interaction.output_image.data)
+                mask_pil = Image.open(io.BytesIO(mask_bytes)).convert("L").resize((width, height))
+                
+                # Decode Trace
+                trace_bytes = base64.b64decode(trace_interaction.output_image.data)
+                ai_lines_pil = Image.open(io.BytesIO(trace_bytes)).convert("L").resize((width, height))
                 edges = _np.array(ai_lines_pil)
                 
-                # 2. Tone map logic for tritone
+                # 3. Tone map colors
                 avg_rgb = get_dominant_color(img_array)
                 h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
                 
-                # Primary color
                 c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
-                
-                # Analogous color (smooth blend for midtones)
                 target_rgb_2 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.15) % 1.0, 1, 1))
                 c2 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb_2) if c != c1 else 999)
-                
-                # Complementary color (pop for highlights/shadows)
                 target_rgb_3 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))
                 c3 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb_3) if c not in (c1, c2) else 999)
                 
-                # Sort by luminance
                 c_dark, c_mid, c_light = sorted([c1, c2, c3], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
                 
+                # Create a tritone colored version of the original image
                 layer_pil = Image.fromarray(img_array).convert("L")
                 layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.2)
+                tritone_img = ImageOps.colorize(layer_pil, black=c_dark, white=c_light, mid=c_mid)
                 
-                # 3-color tone map
-                processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light, mid=c_mid)
-                
-                # 3. Composite AI strokes with a misregistered printing effect
+                # 4. Blending & Flair on Top
+                # We blend the Tritone layer over the Original image, using the LLM Mask!
                 from PIL import ImageChops
-                edges_pil = Image.fromarray(edges)
+                # Overlay the tritone to add "flair" without replacing the image entirely
+                blended_flair = ImageChops.overlay(Image.fromarray(img_array), tritone_img)
+                # Apply only to the masked foreground
+                processed = Image.composite(blended_flair, Image.fromarray(img_array), mask_pil)
                 
-                # Shift strokes slightly to simulate Riso print misregistration
+                # 5. Composite AI strokes
+                edges_pil = Image.fromarray(edges)
                 dx, dy = random.randint(3, 8), random.randint(3, 8)
                 shifted_edges = ImageChops.offset(edges_pil, dx, dy)
                 
-                # Color the strokes using the brightest pop color
                 stroke_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
                 stroke_rgba[..., :3] = c_light
                 stroke_rgba[..., 3] = _np.array(shifted_edges)
