@@ -27,7 +27,7 @@ logger = logging.getLogger("sophee.app.image_tools")
 # Generate Image
 # ---------------------------------------------------------------------------
 
-async def generate_image(
+async def gemini_generate_image(
     prompt: str,
     tool_context: ToolContext,
     resolution: str = None,

@@ -45,7 +45,7 @@ from app.tools import (
     search_lastfm,
 )
 from app.image_tools import (
-    generate_image,
+    gemini_generate_image,
     preprocess_image,
     show_image_settings,
     set_image_defaults,
@@ -221,7 +221,7 @@ art_director = Agent(
     description="A professional illustrator and art scholar who designs drawings/images and teaches the user about art styles.",
     instruction=_load_prompt("art_director"),
     tools=[
-        generate_image,
+        gemini_generate_image,
         preprocess_image,
         roll_artistic_inspiration,
         get_art_director_settings,
