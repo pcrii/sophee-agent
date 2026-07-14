@@ -169,7 +169,7 @@ comfy_mcp = McpToolset(
     connection_params=StdioConnectionParams(
         server_params=StdioServerParameters(
             command="npx",
-            args=["-y", "@comfyorg/comfy-mcp"],
+            args=["-y", "comfyui-mcp"],
         ),
     )
 )
