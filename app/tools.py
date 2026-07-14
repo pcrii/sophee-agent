@@ -1226,7 +1226,7 @@ Ensure the divider "#### TRANSCRIPT" is used exactly as written before the spoke
 # ---------------------------------------------------------------------------
 
 from app.image_tools import (  # noqa: E402, F401
-    generate_image,
+    gemini_generate_image,
     preprocess_image,
     show_image_settings,
     set_image_defaults,
