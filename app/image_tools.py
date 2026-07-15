@@ -322,6 +322,7 @@ async def gemini_generate_image(
 async def preprocess_image(
     tool_context: ToolContext,
     mode: str = "canny",
+    prompt: str = None,
 ) -> dict:
     """Applies a visual preprocessing transform to the current reference image.
     This replaces the reference image in session state with the processed version,
@@ -343,6 +344,7 @@ async def preprocess_image(
             - 'smart_crop': Intelligently crops to the main subject.
             - 'rembg': Removes the background (legacy, may fail on new Python).
             - 'remove_bg_gemini': Removes the background using an AI-generated silhouette mask. Best for photos and complex scenes with natural edges.
+            - 'custom_mask_gemini': Removes specific elements based on the `prompt`. Specify what to keep/remove in the prompt (e.g. 'keep the head, remove the body and arm').
             - 'remove_whitespace': Removes white and near-white pixels (chroma-key). Instant, no API call. Best for flat graphics, logos, icons, and emoji-style art with solid white backgrounds.
             - 'remove_text': Uses AI to remove typography/text while preserving the scene.
             - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
@@ -373,11 +375,11 @@ async def preprocess_image(
         if mode == "riso_pop":
             mode = random.choice(["riso_sticker", "riso_duotone", "riso_tritone", "riso_multiply", "riso_sticker_book"])
 
-        processed_bytes = await preprocess_image_bytes(raw_bytes, mode)
+        processed_bytes = await preprocess_image_bytes(raw_bytes, mode, prompt=prompt)
         if not processed_bytes:
             return {
                 "status": "error",
-                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, remove_text, riso_sticker, riso_duotone, riso_tritone, riso_multiply, riso_sticker_book.",
+                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, custom_mask_gemini, remove_text, riso_sticker, riso_duotone, riso_tritone, riso_multiply, riso_sticker_book.",
             }
 
         processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
@@ -424,13 +426,15 @@ async def preprocess_image(
         return {"status": "error", "message": f"Preprocessing failed: {e}"}
 
 
-async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
+async def preprocess_image_bytes(raw_bytes: bytes, mode: str, prompt: str = None) -> bytes | None:
     """Standalone preprocessing helper: takes raw image bytes, applies a transform,
     returns processed bytes (PNG). No ToolContext required — used by Discord UI buttons.
 
     Args:
         raw_bytes: Raw image bytes (any PIL-supported format).
-        mode: Transform to apply — 'canny', 'sketch', 'posterize', or 'blur'.
+        mode: The preprocessing mode to apply.
+        prompt: Optional text prompt for modes that require it (e.g. custom_mask_gemini).
+    """        mode: Transform to apply — 'canny', 'sketch', 'posterize', or 'blur'.
 
     Returns:
         Processed image as PNG bytes, or None on failure.
@@ -882,6 +886,51 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             mask_pil = Image.fromarray(mask_arr, "L")
 
             # Apply mask as real alpha channel to original image
+            original_rgba = pil_img.convert("RGBA")
+            original_rgba.putalpha(mask_pil)
+            processed = original_rgba
+
+        elif mode == "custom_mask_gemini":
+            from google import genai
+            import os
+            import base64
+            import asyncio
+            import numpy as _np
+
+            api_key = os.getenv("GEMINI_API_KEY")
+            client = genai.Client(api_key=api_key)
+
+            b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+            
+            mask_prompt = prompt or "Keep the main subject, remove everything else."
+
+            mask_interaction = await client.aio.interactions.create(
+                model="gemini-3.1-flash-image",
+                input=[
+                    {
+                        "type": "text",
+                        "text": (
+                            "Output a pure black and white silhouette mask for this image based on the user's prompt. "
+                            f"User prompt: '{mask_prompt}'\n"
+                            "The elements to keep must be solid white. The elements to remove/discard must be pure black. "
+                            "No gray tones, no gradients, no anti-aliasing. "
+                            "Just a clean binary mask."
+                        ),
+                    },
+                    {"type": "image", "data": b64_data, "mime_type": "image/png"},
+                ],
+            )
+
+            if not mask_interaction.output_image:
+                raise ValueError("Gemini did not return a mask image for custom_mask_gemini.")
+
+            mask_bytes = base64.b64decode(mask_interaction.output_image.data)
+            mask_pil = Image.open(_io.BytesIO(mask_bytes)).convert("L").resize(pil_img.size)
+
+            mask_arr = _np.array(mask_pil)
+            mask_arr = (_np.array(mask_arr) > 128).astype(_np.uint8) * 255
+            mask_pil = Image.fromarray(mask_arr, "L")
+
             original_rgba = pil_img.convert("RGBA")
             original_rgba.putalpha(mask_pil)
             processed = original_rgba
