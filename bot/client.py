@@ -172,6 +172,69 @@ async def on_ready():
     asyncio.create_task(_scan_and_resurrect())
 
 
+@client.event
+async def on_interaction(interaction: discord.Interaction):
+    """Fallback handler for button interactions when no live View instance is registered.
+
+    This fires for proc_* custom_ids from ProcessedImageView after a bot restart,
+    allowing those buttons to keep working across restarts.
+    """
+    # Let discord.py handle it normally first if a view is registered
+    if interaction.type != discord.InteractionType.component:
+        return
+    if interaction.response.is_done():
+        return
+
+    custom_id = (interaction.data or {}).get("custom_id", "")
+    if not custom_id.startswith("proc_"):
+        return  # Not ours to handle
+
+    try:
+        parts = custom_id.split(":")
+        action = parts[0]  # proc_reroll, proc_process, proc_filters, proc_useref
+
+        if action == "proc_reroll":
+            # proc_reroll:{source_msg_id}:{mode}:{user_id}:{session_id}
+            source_msg_id, mode, user_id, session_id = int(parts[1]), parts[2], parts[3], parts[4]
+        elif action in ("proc_process", "proc_filters", "proc_useref"):
+            # proc_{action}:{source_msg_id}:{user_id}:{session_id}
+            source_msg_id, user_id, session_id = int(parts[1]), parts[2], parts[3]
+            mode = None
+        else:
+            return
+
+        try:
+            source_msg = await interaction.channel.fetch_message(source_msg_id)
+        except Exception:
+            await interaction.response.send_message("❌ Original image no longer accessible.", ephemeral=True)
+            return
+
+        from bot.views import PostProcessView, FiltersView
+
+        if action == "proc_reroll":
+            view = PostProcessView(source_msg, user_id, session_id, update_session_state, session_service)
+            await view._apply_and_post(interaction, mode)
+
+        elif action == "proc_process":
+            view = PostProcessView(source_msg, user_id, session_id, update_session_state, session_service)
+            await interaction.response.send_message("Choose a processing step:", view=view, ephemeral=True)
+
+        elif action == "proc_filters":
+            view = FiltersView(source_msg, user_id, session_id, update_session_state, session_service)
+            await interaction.response.send_message("Choose a filter:", view=view, ephemeral=True)
+
+        elif action == "proc_useref":
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            from bot.artifact_helpers import save_reference_image_from_message
+            await save_reference_image_from_message(source_msg, user_id, session_id)
+            await interaction.followup.send("✅ Image saved as reference — available even after session resets.", ephemeral=True)
+
+    except Exception as e:
+        logger.error("on_interaction fallback error (custom_id=%s): %s", custom_id, e)
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Something went wrong processing that button.", ephemeral=True)
+
+
 # ---------------------------------------------------------------------------
 # Slash Commands
 # ---------------------------------------------------------------------------
@@ -305,6 +368,13 @@ async def execute_agent_turn(
 
     # Trim history before running agent
     await trim_session_history(session_service, APP_NAME, user_id, session_id)
+
+    # Auto-restore reference image from artifact if session state lost it (4hr wipe / restart)
+    try:
+        from bot.artifact_helpers import restore_reference_image_to_session
+        await restore_reference_image_to_session(user_id, session_id)
+    except Exception as _ref_err:
+        logger.debug("Reference image restore skipped: %s", _ref_err)
 
     # We will accumulate any state changes required for this turn
     state_updates = {

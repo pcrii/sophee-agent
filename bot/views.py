@@ -1087,12 +1087,12 @@ class ImageView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-# ---------------------------------------------------------------------------
-# Post-Process View
-# ---------------------------------------------------------------------------
-
 class ProcessedImageView(discord.ui.View):
-    """Buttons on a post-processed image. Allows chaining further process/filter steps."""
+    """Buttons on a post-processed image. Allows chaining further process/filter steps.
+
+    Buttons use encoded custom_ids so they survive bot restarts. The on_interaction
+    handler in client.py picks them up when no live view instance is registered.
+    """
     def __init__(self, source_message_id: int, mode: str, user_id: str, session_id: str, session_service, update_state_fn):
         super().__init__(timeout=None)
         self.source_message_id = source_message_id
@@ -1102,48 +1102,70 @@ class ProcessedImageView(discord.ui.View):
         self.session_service = session_service
         self.update_state_fn = update_state_fn
 
+        # Encode state into custom_ids — survives bot restarts
+        sid = str(source_message_id)
+        uid = str(user_id)
+        sess = str(session_id)
+        m = str(mode)
+
+        reroll_btn = discord.ui.Button(label="🎲 Reroll", style=discord.ButtonStyle.secondary, custom_id=f"proc_reroll:{sid}:{m}:{uid}:{sess}")
+        reroll_btn.callback = self.reroll_callback
+        self.add_item(reroll_btn)
+
+        process_btn = discord.ui.Button(label="🔧 Process", style=discord.ButtonStyle.primary, custom_id=f"proc_process:{sid}:{uid}:{sess}")
+        process_btn.callback = self.process_callback
+        self.add_item(process_btn)
+
+        filters_btn = discord.ui.Button(label="✨ Filters", style=discord.ButtonStyle.primary, custom_id=f"proc_filters:{sid}:{uid}:{sess}")
+        filters_btn.callback = self.filters_callback
+        self.add_item(filters_btn)
+
+        useref_btn = discord.ui.Button(label="🎨 Use as Ref", style=discord.ButtonStyle.secondary, custom_id=f"proc_useref:{sid}:{uid}:{sess}")
+        useref_btn.callback = self.use_as_ref_callback
+        self.add_item(useref_btn)
+
     async def _fetch_source_message(self, interaction: discord.Interaction) -> discord.Message | None:
         try:
             return await interaction.channel.fetch_message(self.source_message_id)
         except Exception:
-            await interaction.response.send_message("\u274c Processed image not found.", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ Processed image not found.", ephemeral=True)
             return None
 
-    @discord.ui.button(label="\U0001f3b2 Reroll", style=discord.ButtonStyle.secondary)
-    async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def reroll_callback(self, interaction: discord.Interaction):
         source_msg = await self._fetch_source_message(interaction)
         if not source_msg:
             return
         view = PostProcessView(source_msg, self.user_id, self.session_id, self.update_state_fn, self.session_service)
         await view._apply_and_post(interaction, self.mode)
 
-    @discord.ui.button(label="\U0001f527 Process", style=discord.ButtonStyle.primary)
-    async def process_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def process_callback(self, interaction: discord.Interaction):
         source_msg = await self._fetch_source_message(interaction)
         if not source_msg:
             return
         view = PostProcessView(source_msg, self.user_id, self.session_id, self.update_state_fn, self.session_service)
         await interaction.response.send_message("Choose a processing step:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="\u2728 Filters", style=discord.ButtonStyle.primary)
-    async def filters_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def filters_callback(self, interaction: discord.Interaction):
         source_msg = await self._fetch_source_message(interaction)
         if not source_msg:
             return
         view = FiltersView(source_msg, self.user_id, self.session_id, self.update_state_fn, self.session_service)
         await interaction.response.send_message("Choose a filter:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="\U0001f3a8 Use as Ref", style=discord.ButtonStyle.secondary)
-    async def use_as_ref_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Silently set this processed image as the reference for the next generation."""
+    async def use_as_ref_callback(self, interaction: discord.Interaction):
+        """Save the processed image to ADK artifact so it persists across session resets and bot restarts."""
         source_msg = await self._fetch_source_message(interaction)
         if not source_msg:
             return
-        # Image is already in session state from _apply_and_post — just confirm
-        await interaction.response.send_message(
-            "\u2705 Image set as reference for your next generation prompt.",
-            ephemeral=True
-        )
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            from bot.artifact_helpers import save_reference_image_from_message
+            await save_reference_image_from_message(source_msg, self.user_id, self.session_id)
+            await interaction.followup.send("✅ Image saved as reference — it'll be available even after a session reset.", ephemeral=True)
+        except Exception as e:
+            logger.error("Use as Ref failed: %s", e)
+            await interaction.followup.send(f"❌ Could not save reference: {e}", ephemeral=True)
 
 class BaseProcessView(discord.ui.View):
     def __init__(self, source_message: discord.Message, user_id: str, session_id: str, update_state_fn, session_service):
