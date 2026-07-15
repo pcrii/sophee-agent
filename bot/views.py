@@ -1091,27 +1091,59 @@ class ImageView(discord.ui.View):
 # Post-Process View
 # ---------------------------------------------------------------------------
 
-class ProcessResultView(discord.ui.View):
-    def __init__(self, original_message_id: int, mode: str, user_id: str, session_id: str, session_service, update_state_fn):
+class ProcessedImageView(discord.ui.View):
+    """Buttons on a post-processed image. Allows chaining further process/filter steps."""
+    def __init__(self, source_message_id: int, mode: str, user_id: str, session_id: str, session_service, update_state_fn):
         super().__init__(timeout=None)
-        self.original_message_id = original_message_id
+        self.source_message_id = source_message_id
         self.mode = mode
         self.user_id = user_id
         self.session_id = session_id
         self.session_service = session_service
         self.update_state_fn = update_state_fn
 
-    @discord.ui.button(label="🎲 Reroll Process", style=discord.ButtonStyle.secondary)
-    async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = interaction.channel
+    async def _fetch_source_message(self, interaction: discord.Interaction) -> discord.Message | None:
         try:
-            original_message = await channel.fetch_message(self.original_message_id)
+            return await interaction.channel.fetch_message(self.source_message_id)
         except Exception:
-            await interaction.response.send_message("❌ Original image lost.", ephemeral=True)
+            await interaction.response.send_message("\u274c Processed image not found.", ephemeral=True)
+            return None
+
+    @discord.ui.button(label="\U0001f3b2 Reroll", style=discord.ButtonStyle.secondary)
+    async def reroll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        source_msg = await self._fetch_source_message(interaction)
+        if not source_msg:
             return
-        
-        view = PostProcessView(original_message, self.user_id, self.session_id, self.update_state_fn, self.session_service)
+        view = PostProcessView(source_msg, self.user_id, self.session_id, self.update_state_fn, self.session_service)
         await view._apply_and_post(interaction, self.mode)
+
+    @discord.ui.button(label="\U0001f527 Process", style=discord.ButtonStyle.primary)
+    async def process_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        source_msg = await self._fetch_source_message(interaction)
+        if not source_msg:
+            return
+        view = PostProcessView(source_msg, self.user_id, self.session_id, self.update_state_fn, self.session_service)
+        await interaction.response.send_message("Choose a processing step:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="\u2728 Filters", style=discord.ButtonStyle.primary)
+    async def filters_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        source_msg = await self._fetch_source_message(interaction)
+        if not source_msg:
+            return
+        view = FiltersView(source_msg, self.user_id, self.session_id, self.update_state_fn, self.session_service)
+        await interaction.response.send_message("Choose a filter:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="\U0001f3a8 Use as Ref", style=discord.ButtonStyle.secondary)
+    async def use_as_ref_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Silently set this processed image as the reference for the next generation."""
+        source_msg = await self._fetch_source_message(interaction)
+        if not source_msg:
+            return
+        # Image is already in session state from _apply_and_post — just confirm
+        await interaction.response.send_message(
+            "\u2705 Image set as reference for your next generation prompt.",
+            ephemeral=True
+        )
 
 class BaseProcessView(discord.ui.View):
     def __init__(self, source_message: discord.Message, user_id: str, session_id: str, update_state_fn, session_service):
@@ -1159,27 +1191,31 @@ class BaseProcessView(discord.ui.View):
             import io
             label_map = {
                 "canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", 
-                "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_text": "📝 Remove Text", 
+                "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_bg_gemini": "✂️ Remove BG",
+                "remove_text": "📝 Remove Text", 
                 "riso_sticker": "🖨️ Riso Sticker", "riso_duotone": "🖨️ Riso Duotone", "riso_multiply": "🖨️ Riso Multiply",
                 "riso_tritone": "🖨️ Riso Tritone", "riso_sticker_book": "🖨️ Sticker Book"
             }
             label = label_map.get(mode, mode.title())
             channel = self.source_message.channel
             
-            result_view = ProcessResultView(
-                original_message_id=self.source_message.id,
+            result_view = ProcessedImageView(
+                source_message_id=0,  # placeholder; updated after send below
                 mode=mode,
                 user_id=self.user_id,
                 session_id=self.session_id,
                 session_service=self.session_service,
                 update_state_fn=self.update_state_fn
             )
-            
-            await channel.send(
-                content=f"✅ **{label}** applied. Your next prompt will edit this image.",
+
+            sent_msg = await channel.send(
+                content=f"\u2705 **{label}** applied. Your next prompt will edit this image.",
                 file=discord.File(io.BytesIO(result_bytes), filename=f"processed_{mode}.png"),
                 view=result_view
             )
+            # Now patch the view with the real message ID so buttons fetch the right image
+            result_view.source_message_id = sent_msg.id
+            await sent_msg.edit(view=result_view)
             await interaction.followup.send(f"✅ Applied **{label}**.", ephemeral=True)
 
         except Exception as e:
@@ -1210,7 +1246,7 @@ class PostProcessView(BaseProcessView):
 
     @discord.ui.button(label="✂️ Remove BG", style=discord.ButtonStyle.primary, row=1)
     async def rembg_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "rembg")
+        await self._apply_and_post(interaction, "remove_bg_gemini")
 
     @discord.ui.button(label="📝 Remove Text", style=discord.ButtonStyle.primary, row=1)
     async def remove_text_button(self, interaction: discord.Interaction, button: discord.ui.Button):

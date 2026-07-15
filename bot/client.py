@@ -589,25 +589,26 @@ async def execute_agent_turn(
             filename=new_image_key,
             session_id=session_id,
         )
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpeg", mode="wb") as f:
+        # Determine correct file suffix from key name
+        if new_image_key.endswith(".png"):
+            temp_suffix = ".png"
+        else:
+            temp_suffix = ".jpeg"
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=temp_suffix, mode="wb") as f:
             f.write(part_data.inline_data.data)
             temp_file_path = f.name
             
         if "preprocessed_" in new_image_key:
-            from bot.views import ProcessResultView
+            from bot.views import ProcessedImageView
             import re
             
             mode_match = re.search(r"preprocessed_(.+?)_\d+", new_image_key)
             mode = mode_match.group(1) if mode_match else "unknown"
             
-            original_msg_id = None
-            if message_reference and hasattr(message_reference, "reference") and message_reference.reference:
-                original_msg_id = message_reference.reference.message_id
-            elif message_reference:
-                original_msg_id = message_reference.id
-                
-            view = ProcessResultView(
-                original_message_id=original_msg_id,
+            # source_message_id will be patched after the message is sent
+            view = ProcessedImageView(
+                source_message_id=0,
                 mode=mode,
                 user_id=user_id,
                 session_id=session_id,
@@ -634,6 +635,11 @@ async def execute_agent_turn(
                 view=view,
             )
         os.remove(temp_file_path)
+
+        # If this was a preprocessed artifact, patch the view's source_message_id now
+        if "preprocessed_" in new_image_key:
+            view.source_message_id = sent_msg.id
+            await sent_msg.edit(view=view)
 
         # Determine the isolated session ID for this image thread
         image_session_id = session_id

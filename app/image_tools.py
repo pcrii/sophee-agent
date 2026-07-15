@@ -238,13 +238,30 @@ async def gemini_generate_image(
 
         if image_bytes:
             logger.warning("Image bytes retrieved! Length: %d", len(image_bytes))
+            # Detect if the output has an alpha channel — if so, save as PNG to preserve transparency
+            from PIL import Image as _PilImage
+            try:
+                _probe = _PilImage.open(BytesIO(image_bytes))
+                has_alpha = _probe.mode in ("RGBA", "LA") or (
+                    _probe.mode == "P" and "transparency" in _probe.info
+                )
+            except Exception:
+                has_alpha = False
+
+            if has_alpha:
+                mime_type = "image/png"
+                ext = "png"
+            else:
+                mime_type = "image/jpeg"
+                ext = "jpeg"
+
             part = types.Part(
-                inline_data=types.Blob(data=image_bytes, mime_type="image/jpeg")
+                inline_data=types.Blob(data=image_bytes, mime_type=mime_type)
             )
             artifact_name = (
-                f"user:generated_image_{hashlib.md5(prompt.encode()).hexdigest()[:8]}_{int(time.time())}.jpeg"
+                f"user:generated_image_{hashlib.md5(prompt.encode()).hexdigest()[:8]}_{int(time.time())}.{ext}"
             )
-            logger.info("Saving artifact: %s", artifact_name)
+            logger.info("Saving artifact: %s (mime=%s)", artifact_name, mime_type)
             try:
                 await tool_context.save_artifact(artifact_name, part)
                 logger.info("Successfully saved artifact: %s", artifact_name)
@@ -293,7 +310,8 @@ async def preprocess_image(
             - 'posterize': Reduce color complexity. Keeps shapes, removes noise and fine detail.
             - 'blur': Heavy Gaussian blur. Very abstract canvas — loose vibe reference.
             - 'smart_crop': Intelligently crops to the main subject.
-            - 'rembg': Removes the background.
+            - 'rembg': Removes the background (legacy, may fail on new Python).
+            - 'remove_bg_gemini': Removes the background using Gemini AI. Best quality, supports transparency. Use this instead of 'rembg'.
             - 'remove_text': Uses AI to remove typography/text while preserving the scene.
             - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
             - 'riso_duotone': Applies a Risograph print aesthetic (Duotone style).
@@ -787,6 +805,33 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
                 rgba[..., 3] = 255
                 
                 processed = Image.fromarray(rgba, "RGBA").convert("RGB")
+
+        elif mode == "remove_bg_gemini":
+            from google import genai
+            import os
+            import base64
+
+            api_key = os.getenv("GEMINI_API_KEY")
+            client = genai.Client(api_key=api_key)
+
+            b64_data = base64.b64encode(raw_bytes).decode("utf-8")
+            interaction = await client.aio.interactions.create(
+                model="gemini-3.1-flash-image",
+                input=[
+                    {"type": "text", "text": "Remove the background from this image completely. Output ONLY the foreground subject on a fully transparent background. Preserve the exact shape, edges, and details of the subject. Do not add any background color or pattern."},
+                    {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                ],
+            )
+
+            generated_image = interaction.output_image
+            if not generated_image:
+                raise ValueError("Gemini did not return an image for remove_bg_gemini.")
+
+            output_bytes = base64.b64decode(generated_image.data)
+            processed = Image.open(_io.BytesIO(output_bytes))
+            # Preserve RGBA if returned — do not flatten to RGB
+            if processed.mode not in ("RGBA", "LA"):
+                processed = processed.convert("RGBA")
 
         elif mode == "remove_text":
             from google import genai
