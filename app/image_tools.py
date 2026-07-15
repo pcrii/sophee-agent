@@ -864,8 +864,10 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str, prompt: str = None
                             "Output a pure black and white silhouette mask for this image. "
                             "The foreground subject must be solid white. "
                             "The entire background must be pure black. "
+                            "CRITICAL: The entire interior of the foreground subject MUST be a completely solid white silhouette! "
+                            "Do NOT leave black holes for internal shadows, dark shading, or black ink lines. Fill them in solid white. "
                             "No gray tones, no gradients, no anti-aliasing. "
-                            "Just a clean binary mask."
+                            "Just a clean, completely solid binary mask."
                         ),
                     },
                     {"type": "image", "data": b64_data, "mime_type": "image/png"},
@@ -912,8 +914,10 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str, prompt: str = None
                             "Output a pure black and white silhouette mask for this image based on the user's prompt. "
                             f"User prompt: '{mask_prompt}'\n"
                             "The elements to keep must be solid white. The elements to remove/discard must be pure black. "
+                            "CRITICAL: The entire interior of the elements you keep MUST be a completely solid white silhouette! "
+                            "Do NOT leave black holes for internal shadows, dark shading, or black ink lines. Fill them in solid white. "
                             "No gray tones, no gradients, no anti-aliasing. "
-                            "Just a clean binary mask."
+                            "Just a clean, completely solid binary mask."
                         ),
                     },
                     {"type": "image", "data": b64_data, "mime_type": "image/png"},
