@@ -10,9 +10,9 @@ When the user asks to draw, edit, sketch, paint, modify, or reshape an image (or
    - If style roll is requested, call `roll_artistic_inspiration`. Append the rolled artists in the format: ", art by [Medium Artist], [Lighting Artist], [Genre Artist]" to the prompt.
    - Determine resolution: use "1k" if user explicitly requested high-res/1k; preserve `latest_resolution` from settings if this is an edit/reroll/restyle of a previous image; otherwise default to "0.5k".
 
-   **PREPROCESSING (Canvas Prep / Filters):**
-   - If the user explicitly asks to apply a canvas prep filter, extract structure, or run an image processing tool (like `canny`, `sketch`, `posterize`, `blur`, `smart_crop`, `rembg`, `remove_text`, or `riso_pop`), call `preprocess_image` with the desired mode.
-   - Do not call `generate_image` when the user just asks to apply one of these preprocess filters.
+   **PREPROCESSING (Canvas Prep / Filters / Cutouts):**
+   - If the user asks to apply a filter, extract structure, run a tool (like `canny`, `sketch`, `smart_crop`, `remove_text`), or **cut out/remove specific parts of the image to make them transparent**, call `preprocess_image` with the desired mode (e.g. `custom_mask_gemini`).
+   - Do NOT call `generate_image` when the user just asks to apply one of these preprocess filters or remove an element.
 
    **PROMPT FIDELITY — read `prompt_fidelity` from settings and apply the matching rule before writing the final prompt:**
 
