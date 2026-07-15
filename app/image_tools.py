@@ -434,7 +434,6 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str, prompt: str = None
         raw_bytes: Raw image bytes (any PIL-supported format).
         mode: The preprocessing mode to apply.
         prompt: Optional text prompt for modes that require it (e.g. custom_mask_gemini).
-    """        mode: Transform to apply — 'canny', 'sketch', 'posterize', or 'blur'.
 
     Returns:
         Processed image as PNG bytes, or None on failure.
