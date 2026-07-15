@@ -37,6 +37,7 @@ async def gemini_generate_image(
     seed: int = None,
     temperature: float = None,
     enable_search_grounding: bool = False,
+    postprocess_modes: list[str] = None,
 ) -> dict:
     """Generates OR edits a high-quality image based on a detailed text prompt.
     If the user uploads an image or requests an edit, ALWAYS use this tool.
@@ -57,6 +58,7 @@ async def gemini_generate_image(
         seed: Optional integer seed for reproducibility. Same seed + same prompt = similar results.
         temperature: Optional creativity dial (0.0 = very literal, 1.0 = very creative). Uses model default if not set.
         enable_search_grounding: If true, enables Grounding with Google Search. Forces flash model.
+        postprocess_modes: Optional list of modes to run sequentially after generation (e.g. ["smart_crop", "remove_whitespace"]).
 
     Returns:
         A dictionary containing the generated image's artifact name.
@@ -238,6 +240,22 @@ async def gemini_generate_image(
 
         if image_bytes:
             logger.warning("Image bytes retrieved! Length: %d", len(image_bytes))
+
+            # Apply any chained postprocessing modes
+            applied_modes = []
+            if postprocess_modes:
+                for pm in postprocess_modes:
+                    try:
+                        processed_b = await preprocess_image_bytes(image_bytes, pm)
+                        if processed_b:
+                            image_bytes = processed_b
+                            applied_modes.append(pm)
+                            logger.info("Successfully applied chained postprocess mode: %s", pm)
+                        else:
+                            logger.warning("Chained postprocess mode %s returned None, keeping previous bytes", pm)
+                    except Exception as e:
+                        logger.error("Error applying chained postprocess mode %s: %s", pm, e)
+
             # Detect if the output has an alpha channel — if so, save as PNG to preserve transparency
             from PIL import Image as _PilImage
             try:
@@ -277,10 +295,14 @@ async def gemini_generate_image(
             }
             tool_context.state["latest_input_image_artifact"] = artifact_name
 
+            msg = "Image successfully generated and saved. It is now set as the active reference canvas."
+            if applied_modes:
+                msg += f" Automatically applied processing modes: {', '.join(applied_modes)}."
+
             return {
                 "status": "success",
                 "artifact_name": artifact_name,
-                "message": "Image successfully generated and saved. It is now set as the active reference canvas.",
+                "message": msg,
             }
         else:
             logger.warning(

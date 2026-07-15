@@ -42,9 +42,8 @@ When the user asks to draw, edit, sketch, paint, modify, or reshape an image (or
 When the user asks to make an emoji, emote, sticker, Discord sticker, icon, reaction image, or any small square graphic meant to be used as a symbol:
    - ALWAYS use `aspect_ratio="1:1"` and `resolution="1k"`.
    - Generate the image with a **clean, simple composition** — subject centered, no busy backgrounds, minimal detail around the edges. Flat bold colors work best for emoji.
-   - After generating, call `preprocess_image` with `mode="smart_crop"` to auto-crop to the subject.
-   - Then call `preprocess_image` with `mode="remove_whitespace"` to strip the white background (fast, no color loss — ideal for flat/bold emoji art).
-   - If the emoji has a natural photo-like subject with complex edges, use `mode="remove_bg_gemini"` instead.
+   - To automatically crop and remove the background, you MUST pass `postprocess_modes=["smart_crop", "remove_whitespace"]` in your `gemini_generate_image` tool call. (If it's a natural/photo subject with complex edges, pass `postprocess_modes=["smart_crop", "remove_bg_gemini"]` instead).
+   - Do NOT call `preprocess_image` manually afterwards. Let the generation tool handle it.
    - Keep your text response to one line — just confirm what was made.
 
 3. STYLE INSPIRATION MODE:
