@@ -10,7 +10,9 @@ logger = logging.getLogger("sophee.bot.history")
 
 # Maximum number of conversational turns to keep in session history.
 # Each 'turn' is roughly a user message + model response pair.
-MAX_HISTORY_TURNS = 40
+# We keep this extremely low (5) because image generation doesn't require deep history,
+# and passing base64 images in history massively inflates the context token count/budget.
+MAX_HISTORY_TURNS = 5
 
 DB_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -72,16 +74,22 @@ async def trim_session_history(session_service, app_name: str, user_id: str, ses
 
         # Check for 4-hour inactivity flush (14400 seconds)
         now = time.time()
-        time_inactive = now - session.last_update_time
-        if session.last_update_time > 0 and time_inactive > 14400:
-            if hasattr(session, 'events') and session.events:
-                trimmed_count = len(session.events)
-                session.events = []
-                await _db_clear_events(app_name, user_id, session_id)
-                logger.info(
-                    "Flushed all %d history events from session %s due to inactivity (inactive for %.1fh)",
-                    trimmed_count, session_id, time_inactive / 3600.0
-                )
+        
+        # Determine the time of the last activity by checking the last event's timestamp.
+        # This is much safer than session.last_update_time which can be a datetime object or improperly updated.
+        last_activity_time = 0
+        if hasattr(session, 'events') and session.events:
+            last_activity_time = session.events[-1].timestamp
+            
+        time_inactive = now - last_activity_time
+        if last_activity_time > 0 and time_inactive > 14400:
+            trimmed_count = len(session.events)
+            session.events = []
+            await _db_clear_events(app_name, user_id, session_id)
+            logger.info(
+                "Flushed all %d history events from session %s due to inactivity (inactive for %.1fh)",
+                trimmed_count, session_id, time_inactive / 3600.0
+            )
             return
 
         # Otherwise perform standard event limit trimming
