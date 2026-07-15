@@ -810,28 +810,45 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             from google import genai
             import os
             import base64
+            import asyncio
 
             api_key = os.getenv("GEMINI_API_KEY")
             client = genai.Client(api_key=api_key)
 
             b64_data = base64.b64encode(raw_bytes).decode("utf-8")
-            interaction = await client.aio.interactions.create(
+
+            # Ask Gemini to produce a clean B&W silhouette mask of the foreground subject.
+            # White = keep (subject), Black = discard (background).
+            # We then apply this as a real alpha channel to the original image,
+            # producing genuine RGBA transparency instead of a painted checkerboard.
+            mask_interaction = await client.aio.interactions.create(
                 model="gemini-3.1-flash-image",
                 input=[
-                    {"type": "text", "text": "Remove the background from this image completely. Output ONLY the foreground subject on a fully transparent background. Preserve the exact shape, edges, and details of the subject. Do not add any background color or pattern."},
-                    {"type": "image", "data": b64_data, "mime_type": "image/png"}
+                    {
+                        "type": "text",
+                        "text": (
+                            "Output a pure black and white silhouette mask for this image. "
+                            "The foreground subject must be solid white. "
+                            "The entire background must be pure black. "
+                            "No gray tones, no gradients, no anti-aliasing. "
+                            "Just a clean binary mask."
+                        ),
+                    },
+                    {"type": "image", "data": b64_data, "mime_type": "image/png"},
                 ],
             )
 
-            generated_image = interaction.output_image
-            if not generated_image:
-                raise ValueError("Gemini did not return an image for remove_bg_gemini.")
+            if not mask_interaction.output_image:
+                raise ValueError("Gemini did not return a mask image for remove_bg_gemini.")
 
-            output_bytes = base64.b64decode(generated_image.data)
-            processed = Image.open(_io.BytesIO(output_bytes))
-            # Preserve RGBA if returned — do not flatten to RGB
-            if processed.mode not in ("RGBA", "LA"):
-                processed = processed.convert("RGBA")
+            mask_bytes = base64.b64decode(mask_interaction.output_image.data)
+            mask_pil = Image.open(_io.BytesIO(mask_bytes)).convert("L").resize(pil_img.size)
+
+            # Apply mask as real alpha channel to original image
+            original_rgba = pil_img.convert("RGBA")
+            original_rgba.putalpha(mask_pil)
+            processed = original_rgba
+
 
         elif mode == "remove_text":
             from google import genai
