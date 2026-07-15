@@ -23,9 +23,9 @@ from google.adk.apps import App
 from google.adk.models import Gemini
 from google.adk.tools.google_search_tool import GoogleSearchTool
 from google.genai import types
-from google.adk.tools.mcp_tool import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
-from mcp import StdioServerParameters
+# from google.adk.tools.mcp_tool import McpToolset
+# from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+# from mcp import StdioServerParameters
 
 from app.tools import (
     get_pending_suggestions,
@@ -164,15 +164,8 @@ _ytmusic_tools = [
     search_ytmusic_library_playlists,
 ]
 
-# Comfy Cloud MCP Server Integration
-comfy_mcp = McpToolset(
-    connection_params=StdioConnectionParams(
-        server_params=StdioServerParameters(
-            command="npx",
-            args=["-y", "comfyui-mcp"],
-        ),
-    )
-)
+# TODO: ComfyUI MCP integration — configure once ComfyUI server is set up
+# comfy_mcp = McpToolset(...)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +221,6 @@ art_director = Agent(
         show_image_settings,
         set_image_defaults,
         custom_google_search,
-        comfy_mcp,
         *_user_tools,
     ],
 )
