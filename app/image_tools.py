@@ -311,7 +311,8 @@ async def preprocess_image(
             - 'blur': Heavy Gaussian blur. Very abstract canvas — loose vibe reference.
             - 'smart_crop': Intelligently crops to the main subject.
             - 'rembg': Removes the background (legacy, may fail on new Python).
-            - 'remove_bg_gemini': Removes the background using Gemini AI. Best quality, supports transparency. Use this instead of 'rembg'.
+            - 'remove_bg_gemini': Removes the background using an AI-generated silhouette mask. Best for photos and complex scenes with natural edges.
+            - 'remove_whitespace': Removes white and near-white pixels (chroma-key). Instant, no API call. Best for flat graphics, logos, icons, and emoji-style art with solid white backgrounds.
             - 'remove_text': Uses AI to remove typography/text while preserving the scene.
             - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
             - 'riso_duotone': Applies a Risograph print aesthetic (Duotone style).
@@ -811,6 +812,7 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             import os
             import base64
             import asyncio
+            import numpy as _np
 
             api_key = os.getenv("GEMINI_API_KEY")
             client = genai.Client(api_key=api_key)
@@ -819,8 +821,6 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
 
             # Ask Gemini to produce a clean B&W silhouette mask of the foreground subject.
             # White = keep (subject), Black = discard (background).
-            # We then apply this as a real alpha channel to the original image,
-            # producing genuine RGBA transparency instead of a painted checkerboard.
             mask_interaction = await client.aio.interactions.create(
                 model="gemini-3.1-flash-image",
                 input=[
@@ -844,10 +844,30 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str) -> bytes | None:
             mask_bytes = base64.b64decode(mask_interaction.output_image.data)
             mask_pil = Image.open(_io.BytesIO(mask_bytes)).convert("L").resize(pil_img.size)
 
+            # Hard-threshold the mask to binary — eliminates gray anti-aliasing
+            # that causes color washing when used as an alpha channel.
+            mask_arr = _np.array(mask_pil)
+            mask_arr = (_np.array(mask_arr) > 128).astype(_np.uint8) * 255
+            mask_pil = Image.fromarray(mask_arr, "L")
+
             # Apply mask as real alpha channel to original image
             original_rgba = pil_img.convert("RGBA")
             original_rgba.putalpha(mask_pil)
             processed = original_rgba
+
+        elif mode == "remove_whitespace":
+            # Chroma-key for white/near-white pixels — no API call needed.
+            # Perfect for flat-color graphics, logos, icons, and emoji-style art
+            # where the background is a solid white (or near-white) field.
+            # Any pixel with R>220, G>220, B>220 becomes fully transparent.
+            import numpy as _np
+
+            rgba = pil_img.convert("RGBA")
+            data = _np.array(rgba, dtype=_np.uint8)
+            r, g, b, a = data[..., 0], data[..., 1], data[..., 2], data[..., 3]
+            white_mask = (r > 220) & (g > 220) & (b > 220)
+            data[white_mask, 3] = 0  # make near-white pixels fully transparent
+            processed = Image.fromarray(data, "RGBA")
 
 
         elif mode == "remove_text":

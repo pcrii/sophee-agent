@@ -1192,7 +1192,7 @@ class BaseProcessView(discord.ui.View):
             label_map = {
                 "canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", 
                 "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_bg_gemini": "✂️ Remove BG",
-                "remove_text": "📝 Remove Text", 
+                "remove_whitespace": "⬜ Remove White", "remove_text": "📝 Remove Text", 
                 "riso_sticker": "🖨️ Riso Sticker", "riso_duotone": "🖨️ Riso Duotone", "riso_multiply": "🖨️ Riso Multiply",
                 "riso_tritone": "🖨️ Riso Tritone", "riso_sticker_book": "🖨️ Sticker Book"
             }
@@ -1248,7 +1248,11 @@ class PostProcessView(BaseProcessView):
     async def rembg_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._apply_and_post(interaction, "remove_bg_gemini")
 
-    @discord.ui.button(label="📝 Remove Text", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="⬜ Remove White", style=discord.ButtonStyle.primary, row=1)
+    async def remove_whitespace_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._apply_and_post(interaction, "remove_whitespace")
+
+    @discord.ui.button(label="📝 Remove Text", style=discord.ButtonStyle.primary, row=2)
     async def remove_text_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._apply_and_post(interaction, "remove_text")
 
