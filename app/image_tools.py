@@ -268,10 +268,19 @@ async def gemini_generate_image(
             except Exception as save_err:
                 logger.error("Failed to save artifact %s: %s", artifact_name, save_err)
 
+            # Auto-inject the newly generated image as the current reference canvas
+            # so the agent can immediately chain preprocessing tools (like smart_crop)
+            tool_context.state["latest_input_image"] = {
+                "data": base64.b64encode(image_bytes).decode("utf-8"),
+                "mime_type": mime_type,
+                "original_prompt": prompt,
+            }
+            tool_context.state["latest_input_image_artifact"] = artifact_name
+
             return {
                 "status": "success",
                 "artifact_name": artifact_name,
-                "message": "Image successfully generated and saved.",
+                "message": "Image successfully generated and saved. It is now set as the active reference canvas.",
             }
         else:
             logger.warning(
