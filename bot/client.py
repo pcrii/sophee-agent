@@ -596,13 +596,12 @@ async def execute_agent_turn(
                     response_text += "".join([p.text for p in response_parts if p.text])
         except Exception as e:
             error_str = str(e).lower()
-            if not is_retry and ("interaction" in error_str or "not found" in error_str or "404" in error_str or "400" in error_str):
-                logger.warning(f"Interactions API session likely expired ({e}). Wiping pointer and retrying...")
-                await update_session_state(user_id, session_id, {
-                    "_interactions": None, 
-                    "previous_interaction_id": None
-                })
-                return await _run_agent(is_retry=True)
+            if not is_retry and ("interaction" in error_str or "not found" in error_str or "404" in error_str or "400" in error_str or "invalid_request" in error_str):
+                logger.warning(f"Interactions API session likely expired or invalid ({e}). Wiping pointer and retrying...")
+                session.state.pop("_gemini_interaction_id", None)
+                session.events.clear()
+                await session_service.save_session(session)
+                await _run_agent(is_retry=True)
             else:
                 logger.exception("Error running ADK agent:")
                 raise e
