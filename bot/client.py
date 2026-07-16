@@ -619,12 +619,20 @@ async def execute_agent_turn(
             if not is_retry and ("interaction" in error_str or "not found" in error_str or "404" in error_str or "400" in error_str or "invalid_request" in error_str):
                 logger.warning(f"Interactions API session likely expired or invalid ({e}). Wiping pointer and retrying...")
                 session.state.pop("_gemini_interaction_id", None)
-                await session_service.save_session_state(APP_NAME, user_id, session_id, session.state)
-                # Wipe events from DB
-                import sqlite3, os
+                # Wipe events and reset interaction state in DB
+                import sqlite3, os, json
                 db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
                 conn = sqlite3.connect(db_path)
-                conn.cursor().execute("DELETE FROM events WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT state FROM sessions WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
+                row = cursor.fetchone()
+                if row and row[0]:
+                    db_state = json.loads(row[0])
+                    db_state.pop("_gemini_interaction_id", None)
+                    cursor.execute("UPDATE sessions SET state = ? WHERE app_name = ? AND user_id = ? AND session_id = ?", (json.dumps(db_state), APP_NAME, user_id, session_id))
+                    
+                cursor.execute("DELETE FROM events WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
                 conn.commit()
                 conn.close()
                 session.events.clear()
