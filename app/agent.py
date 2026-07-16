@@ -30,6 +30,7 @@ from google.genai import types
 from app.tools import (
     get_pending_suggestions,
     mark_suggestion_status,
+    search_conversation_history,
     fetch_google_news,
     stop_radio_station,
     start_radio_station,
@@ -185,7 +186,7 @@ class CustomGoogleSearchTool(GoogleSearchTool):
 custom_google_search = CustomGoogleSearchTool()
 
 # User tools available to all agents
-_user_tools = [remember_preference, get_user_profile, delete_preference, clear_preferences]
+_user_tools = [remember_preference, get_user_profile, delete_preference, clear_preferences, search_conversation_history]
 
 # MusicBrainz relational database tools
 _musicbrainz_tools = [

@@ -1382,3 +1382,75 @@ async def mark_suggestion_status(id: int, status: str, tool_context: ToolContext
         return {"status": "success", "message": f"Successfully marked suggestion {id} as {status}."}
     else:
         return {"status": "error", "message": f"Suggestion ID {id} not found."}
+
+
+# ---------------------------------------------------------------------------
+# History & Memory
+# ---------------------------------------------------------------------------
+
+async def search_conversation_history(
+    tool_context: ToolContext,
+    query: str,
+    limit: int = 5
+) -> dict:
+    """Searches the agent's memory (past conversation history) for a specific topic, keyword, or context.
+    Use this when the user references something from the past (e.g. "what was that song", "the python script from earlier") and you don't have it in your current context window.
+    
+    Args:
+        tool_context: ToolContext
+        query: The keyword or phrase to search for. Keep it short and specific (e.g. "python script", "song recommendation").
+        limit: Max number of conversation chunks to return (default 5).
+        
+    Returns:
+        A dictionary containing relevant chunks of past conversation.
+    """
+    import sqlite3
+    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
+    
+    if not os.path.exists(db_path):
+        return {"status": "error", "message": "Memory database not found."}
+        
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # We search the event_data JSON string for the query (case-insensitive)
+        cursor.execute('''
+            SELECT timestamp, event_data FROM events 
+            WHERE session_id = ? AND event_data LIKE ?
+            ORDER BY timestamp DESC
+        ''', (tool_context.session_id, f'%{query}%'))
+        
+        results = cursor.fetchmany(limit)
+        conn.close()
+        
+        if not results:
+            return {"status": "info", "message": f"No memories found matching '{query}'."}
+            
+        chunks = []
+        for ts, event_data_str in results:
+            try:
+                event_data = json.loads(event_data_str)
+                if "content" in event_data and "parts" in event_data["content"]:
+                    role = event_data["content"].get("role", "unknown")
+                    text_parts = [p.get("text", "") for p in event_data["content"]["parts"] if "text" in p]
+                    text = "".join(text_parts).strip()
+                    if text:
+                        chunks.append(f"[{role}]: {text}")
+            except Exception:
+                continue
+                
+        if not chunks:
+            return {"status": "info", "message": f"No readable text found for '{query}'."}
+            
+        # Reverse to show chronological order
+        chunks.reverse()
+        return {
+            "status": "success",
+            "matches": len(chunks),
+            "context": "Here are the relevant snippets from past conversations:\n\n" + "\n---\n".join(chunks)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error searching history: {e}")
+        return {"status": "error", "message": "An error occurred while searching memory."}

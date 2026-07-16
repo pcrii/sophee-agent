@@ -40,10 +40,11 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 load_dotenv()
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+logging.getLogger("google_adk").setLevel(logging.DEBUG)
 logger = logging.getLogger("sophee.bot.client")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -468,7 +469,11 @@ async def execute_agent_turn(
                     except Exception as e:
                         logger.error("Failed to check if replied context is in ADK history: %s", e)
 
-                if not already_in_context:
+                if already_in_context:
+                    # Inject a tiny, token-efficient pointer instead of the full text!
+                    short_pointer = search_chunk[:50].replace('\n', ' ')
+                    msg_text = f"[The user is replying to your earlier message starting with: \"{short_pointer}...\"]\n\n{msg_text}"
+                else:
                     msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
 
     # Inject adventure state if active
@@ -568,7 +573,7 @@ async def execute_agent_turn(
     )
 
     response_text = ""
-    async def _run_agent():
+    async def _run_agent(is_retry=False):
         nonlocal response_text
         try:
             async for event in runner.run_async(
@@ -584,8 +589,17 @@ async def execute_agent_turn(
                     )
                     response_text += "".join([p.text for p in response_parts if p.text])
         except Exception as e:
-            logger.exception("Error running ADK agent:")
-            raise e
+            error_str = str(e).lower()
+            if not is_retry and ("interaction" in error_str or "not found" in error_str or "404" in error_str or "400" in error_str):
+                logger.warning(f"Interactions API session likely expired ({e}). Wiping pointer and retrying...")
+                await update_session_state(user_id, session_id, {
+                    "_interactions": None, 
+                    "previous_interaction_id": None
+                })
+                return await _run_agent(is_retry=True)
+            else:
+                logger.exception("Error running ADK agent:")
+                raise e
 
     if interaction:
         await _run_agent()
