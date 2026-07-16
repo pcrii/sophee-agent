@@ -81,11 +81,10 @@ async def save_reference_image_from_message(
     except Exception as e:
         raise RuntimeError(f"Artifact save failed: {e}") from e
 
-    # Also inject into session state for immediate use this turn
-    encoded = base64.b64encode(img_bytes).decode("utf-8")
+    # Set artifact reference in session state (not base64 — keeps state lightweight)
     await update_session_state(user_id, session_id, {
-        "latest_input_image": {"data": encoded, "mime_type": ext_mime},
         "latest_input_image_artifact": REFERENCE_IMAGE_KEY,
+        "latest_input_image_mime": ext_mime,
     })
 
 
@@ -104,8 +103,8 @@ async def restore_reference_image_to_session(user_id: str, session_id: str) -> b
         session = await session_service.get_session(
             app_name=APP_NAME, user_id=user_id, session_id=session_id
         )
-        # If session already has a reference image in state, skip
-        if session and session.state.get("latest_input_image"):
+        # If session already has a reference image artifact set, skip
+        if session and session.state.get("latest_input_image_artifact"):
             return False
 
         part = await artifact_service.load_artifact(
@@ -117,11 +116,10 @@ async def restore_reference_image_to_session(user_id: str, session_id: str) -> b
         if not (part and part.inline_data and part.inline_data.data):
             return False
 
-        encoded = base64.b64encode(part.inline_data.data).decode("utf-8")
         mime = part.inline_data.mime_type or "image/png"
         await update_session_state(user_id, session_id, {
-            "latest_input_image": {"data": encoded, "mime_type": mime},
             "latest_input_image_artifact": REFERENCE_IMAGE_KEY,
+            "latest_input_image_mime": mime,
         })
         logger.info("Restored reference image artifact into session state for user=%s", user_id)
         return True

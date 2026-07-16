@@ -22,7 +22,7 @@ from google.genai import types
 from app.agent import root_agent
 from app.radio_state import set_discord_client
 from bot.cache import save_image_metadata, get_image_metadata
-from bot.history import trim_session_history
+from bot.history import trim_session_history, _db_clear_events
 from bot.message_utils import (
     bracket_urls,
     fetch_chunked_context,
@@ -421,10 +421,7 @@ async def execute_agent_turn(
         logger.debug("Reference image restore skipped: %s", _ref_err)
 
     # We will accumulate any state changes required for this turn
-    state_updates = {
-        "latest_input_image": None,
-        "latest_input_image_artifact": None
-    }
+    state_updates = {}
 
     # Resolve image sequence threading via replies to image messages
     from bot.cache import get_image_metadata
@@ -442,25 +439,8 @@ async def execute_agent_turn(
                 if parent_artifact and any(kw in prompt_lower for kw in ["original", "source", "first", "initial", "seed"]):
                     logger.info("User requested original composition. Routing reference image to parent artifact: %s", parent_artifact)
                     artifact_name = parent_artifact
-                try:
-                    part = await artifact_service.load_artifact(
-                        app_name=APP_NAME,
-                        user_id=user_id,
-                        filename=artifact_name,
-                        session_id=session_id,
-                    )
-                    if part and part.inline_data and part.inline_data.data:
-                        import base64
-                        img_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                        state_updates["latest_input_image"] = {
-                            "data": img_b64,
-                            "mime_type": part.inline_data.mime_type or "image/jpeg",
-                            "original_prompt": ref_meta.get("prompt") or "Generate an image",
-                        }
-                        state_updates["latest_input_image_artifact"] = artifact_name
-                        logger.info("Loaded reply reference image from artifact: %s", artifact_name)
-                except Exception as e:
-                    logger.error("Failed to load reply reference image artifact %s: %s", artifact_name, e)
+                state_updates["latest_input_image_artifact"] = artifact_name
+                logger.info("Set reference image artifact from reply: %s", artifact_name)
 
 
     # Process message content
@@ -480,52 +460,13 @@ async def execute_agent_turn(
             if conv_context:
                 msg_text = f"[The user wants you to read the conversation starting from this message:\n---\n{conv_context}\n---\n]\n\n{msg_text}"
         else:
-            # Default behavior: grab just the chunks of the single replied message
+            # Grab the chunks of the single replied message as context
             chunked_context = await fetch_chunked_context(replied_msg)
             if chunked_context:
-                # Check if this message is already in the agent's recent context
-                already_in_context = False
-                search_chunk = chunked_context.strip()[:100]
-                if search_chunk:
-                    try:
-                        import sqlite3, json
-                        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
-                        conn = sqlite3.connect(db_path)
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            SELECT event_data FROM events 
-                            WHERE session_id = ? 
-                            ORDER BY timestamp DESC LIMIT 30
-                        """, (session_id,))
-                        
-                        for row in cursor.fetchall():
-                            try:
-                                event_data = json.loads(row[0])
-                                if "content" in event_data and "parts" in event_data["content"]:
-                                    text_parts = "".join([p.get("text", "") for p in event_data["content"]["parts"] if "text" in p])
-                                    if search_chunk in text_parts:
-                                        already_in_context = True
-                                        break
-                            except Exception:
-                                pass
-                        conn.close()
-                    except Exception as e:
-                        logger.error("Failed to check if replied context is in ADK history: %s", e)
-
-                if already_in_context:
-                    # Inject a tiny, token-efficient pointer instead of the full text!
-                    short_pointer = search_chunk[:50].replace('\n', ' ')
-                    msg_text = f"[The user is replying to your earlier message starting with: \"{short_pointer}...\"]\n\n{msg_text}"
-                else:
-                    msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
+                msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
 
     # Process image attachments
     if image_data:
-        state_updates["latest_input_image"] = {
-            "data": image_data["data"],
-            "mime_type": image_data["mime_type"],
-            "original_prompt": "Uploaded reference image",
-        }
         # Save user uploaded image as an artifact so it can be referenced in edits
         import hashlib
         uploaded_key = f"user:uploaded_image_{hashlib.md5(image_data['data'].encode()).hexdigest()[:8]}.jpeg"
@@ -540,6 +481,7 @@ async def execute_agent_turn(
             artifact=part
         )
         state_updates["latest_input_image_artifact"] = uploaded_key
+        state_updates["latest_input_image_mime"] = image_data["mime_type"]
 
     # Persist the state updates before the agent run
     if state_updates:
@@ -617,25 +559,13 @@ async def execute_agent_turn(
         except Exception as e:
             error_str = str(e).lower()
             if not is_retry and ("interaction" in error_str or "not found" in error_str or "404" in error_str or "400" in error_str or "invalid_request" in error_str):
-                logger.warning(f"Interactions API session likely expired or invalid ({e}). Wiping pointer and retrying...")
+                logger.warning(f"Interactions API session likely expired or invalid ({e}). Resetting interaction state and retrying...")
+                # Clear the server-side interaction pointer via the proper ADK pattern
+                await update_session_state(user_id, session_id, {"_gemini_interaction_id": None})
                 session.state.pop("_gemini_interaction_id", None)
-                # Wipe events and reset interaction state in DB
-                import sqlite3, os, json
-                db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                
-                cursor.execute("SELECT state FROM sessions WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    db_state = json.loads(row[0])
-                    db_state.pop("_gemini_interaction_id", None)
-                    cursor.execute("UPDATE sessions SET state = ? WHERE app_name = ? AND user_id = ? AND session_id = ?", (json.dumps(db_state), APP_NAME, user_id, session_id))
-                    
-                cursor.execute("DELETE FROM events WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
-                conn.commit()
-                conn.close()
                 session.events.clear()
+                # Clear local events from DB so ADK doesn't try to reconstruct stale history
+                await _db_clear_events(APP_NAME, user_id, session_id)
                 await _run_agent(is_retry=True)
             else:
                 logger.exception("Error running ADK agent:")
@@ -782,37 +712,7 @@ async def execute_agent_turn(
             session_id=image_session_id,
         )
         
-        # Tie image to the ADK history by appending a Markdown link to the last bot message
-        try:
-            import sqlite3, json
-            db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sessions.db")
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, event_data FROM events 
-                WHERE session_id = ? AND user_id = ? 
-                ORDER BY timestamp DESC LIMIT 20
-            """, (session_id, user_id))
-            for row in cursor.fetchall():
-                event_id, event_data_str = row
-                try:
-                    event_data = json.loads(event_data_str)
-                    if event_data.get("author") not in ("user", "system") and event_data.get("author"):
-                        md_text = f"\n\n![image](/api/artifacts/{user_id}/{session_id}/{new_image_key})"
-                        if "content" in event_data and "parts" in event_data["content"]:
-                            parts = event_data["content"]["parts"]
-                            if parts and "text" in parts[-1]:
-                                parts[-1]["text"] += md_text
-                            else:
-                                parts.append({"text": md_text})
-                            cursor.execute("UPDATE events SET event_data = ? WHERE id = ?", (json.dumps(event_data), event_id))
-                            conn.commit()
-                        break
-                except Exception:
-                    pass
-            conn.close()
-        except Exception as e:
-            logger.error("Failed to link artifact to history in client: %s", e)
+
 
         # Send text response in an archived thread
         if response_text:
@@ -1008,7 +908,7 @@ async def on_message(message: discord.Message):
 
     # Session IDs
     user_id = str(message.author.id)
-    session_id = f"msg_{message.id}" # Fresh session by default
+    session_id = f"discord_{message.channel.id}"  # Persistent channel session
 
     active_runner = runner
     # Route to isolated session if replying to a cached message
@@ -1072,12 +972,7 @@ async def on_message(message: discord.Message):
             
             # WORKAROUND FOR ADK BUG: delete_session does not cascade delete events!
             try:
-                import sqlite3
-                conn = sqlite3.connect('sessions.db')
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM events WHERE app_name = ? AND user_id = ? AND session_id = ?", (APP_NAME, user_id, session_id))
-                conn.commit()
-                conn.close()
+                await _db_clear_events(APP_NAME, user_id, session_id)
             except Exception as e:
                 logger.error(f"Failed to clear orphaned events: {e}")
                 

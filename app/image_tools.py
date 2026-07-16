@@ -72,12 +72,23 @@ async def gemini_generate_image(
         start_fresh = tool_context.state.get("start_fresh_image", False)
         if start_fresh:
             tool_context.state["start_fresh_image"] = False
-            tool_context.state.pop("latest_input_image", None)
+            tool_context.state["latest_input_image_artifact"] = None
+            tool_context.state["latest_input_image_mime"] = None
 
-        # Check for a cached reference image in session state
-        latest_img = tool_context.state.get("latest_input_image")
-        if latest_img:
-            raw_bytes = base64.b64decode(latest_img["data"])
+        # Load reference image from artifact (not from state — keeps state lightweight)
+        ref_artifact = tool_context.state.get("latest_input_image_artifact")
+        ref_mime = tool_context.state.get("latest_input_image_mime", "image/jpeg")
+        raw_bytes = None
+        if ref_artifact:
+            try:
+                part = await tool_context.load_artifact(ref_artifact)
+                if part and part.inline_data and part.inline_data.data:
+                    raw_bytes = part.inline_data.data
+                    ref_mime = part.inline_data.mime_type or ref_mime
+            except Exception as load_err:
+                logger.warning("Failed to load reference image artifact %s: %s", ref_artifact, load_err)
+
+        if raw_bytes:
 
             if edit_mode == "edit":
                 # Tight edit — strong preservation phrasing
@@ -105,7 +116,7 @@ async def gemini_generate_image(
                 {
                     "type": "image",
                     "data": base64.b64encode(raw_bytes).decode("utf-8"),
-                    "mime_type": latest_img["mime_type"],
+                    "mime_type": ref_mime,
                 },
                 {"type": "text", "text": final_prompt},
             ]
@@ -113,7 +124,7 @@ async def gemini_generate_image(
                 "prompt": final_prompt,
                 "edit_mode": edit_mode,
                 "has_image": True,
-                "mime_type": latest_img["mime_type"],
+                "mime_type": ref_mime,
                 "image_bytes_length": len(raw_bytes),
                 "api": "interactions",
             }
@@ -235,11 +246,11 @@ async def gemini_generate_image(
 
         # Clear input-side state
         tool_context.state["rolled_style"] = None
-        tool_context.state["latest_input_image"] = None
         tool_context.state["latest_input_image_artifact"] = None
+        tool_context.state["latest_input_image_mime"] = None
 
         if image_bytes:
-            logger.warning("Image bytes retrieved! Length: %d", len(image_bytes))
+            logger.info("Image bytes retrieved! Length: %d", len(image_bytes))
 
             # Apply any chained postprocessing modes
             applied_modes = []
@@ -286,14 +297,10 @@ async def gemini_generate_image(
             except Exception as save_err:
                 logger.error("Failed to save artifact %s: %s", artifact_name, save_err)
 
-            # Auto-inject the newly generated image as the current reference canvas
-            # so the agent can immediately chain preprocessing tools (like smart_crop)
-            tool_context.state["latest_input_image"] = {
-                "data": base64.b64encode(image_bytes).decode("utf-8"),
-                "mime_type": mime_type,
-                "original_prompt": prompt,
-            }
+            # Set the newly generated image as the current reference canvas
+            # via artifact reference (not base64 — keeps state lightweight)
             tool_context.state["latest_input_image_artifact"] = artifact_name
+            tool_context.state["latest_input_image_mime"] = mime_type
 
             msg = "Image successfully generated and saved. It is now set as the active reference canvas."
             if applied_modes:
@@ -355,15 +362,20 @@ async def preprocess_image(
     from google.genai import types
     import random
     
-    latest_img = tool_context.state.get("latest_input_image")
-    if not latest_img:
+    ref_artifact = tool_context.state.get("latest_input_image_artifact")
+    if not ref_artifact:
         return {
             "status": "error",
             "message": "No reference image found in session. Please upload or generate an image first.",
         }
 
     try:
-        raw_bytes = base64.b64decode(latest_img["data"])
+        # Load reference image from artifact
+        ref_part = await tool_context.load_artifact(ref_artifact)
+        if not ref_part or not ref_part.inline_data or not ref_part.inline_data.data:
+            return {"status": "error", "message": "Reference image artifact could not be loaded."}
+        raw_bytes = ref_part.inline_data.data
+
         mode = mode.lower().strip()
 
         processed_bytes = await preprocess_image_bytes(raw_bytes, mode, prompt=prompt)
@@ -372,14 +384,6 @@ async def preprocess_image(
                 "status": "error",
                 "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, custom_mask_gemini, remove_text.",
             }
-
-        processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
-
-        # Replace the session reference image with the processed version
-        tool_context.state["latest_input_image"] = {
-            "data": processed_b64,
-            "mime_type": "image/png",
-        }
 
         # Save as artifact so Discord shows the preprocessing result as a preview
         part = types.Part(
@@ -391,17 +395,9 @@ async def preprocess_image(
         except Exception as save_err:
             logger.error("Failed to save preprocessed artifact: %s", save_err)
 
-        if False:
-            msg = (
-                f"Filter '{mode}' applied successfully! Stop and show the user this final output artifact. "
-                "Do NOT call generate_image. The chat UI will automatically attach the Reroll button."
-            )
-            return {
-                "result": [
-                    {"type": "text", "text": msg},
-                    {"type": "image", "data": processed_b64, "mime_type": "image/png"}
-                ]
-            }
+        # Update reference to point to the preprocessed artifact
+        tool_context.state["latest_input_image_artifact"] = artifact_name
+        tool_context.state["latest_input_image_mime"] = "image/png"
 
         msg = (
             f"Image preprocessed with '{mode}' mode and set as the active reference. "
@@ -410,7 +406,7 @@ async def preprocess_image(
         return {
             "result": [
                 {"type": "text", "text": msg},
-                {"type": "image", "data": processed_b64, "mime_type": "image/png"}
+                {"type": "image", "data": base64.b64encode(processed_bytes).decode('utf-8'), "mime_type": "image/png"}
             ]
         }
 
