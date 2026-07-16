@@ -111,6 +111,7 @@ async def save_text_metadata(
     message_id: str,
     agent_name: str,
     config: dict,
+    session_id: str = None,
 ):
     """Saves metadata for a generated text response, keyed by the Discord Message ID."""
     if not message_id:
@@ -127,6 +128,7 @@ async def save_text_metadata(
             "type": "text",
             "agent_name": agent_name,
             "config": config,
+            "session_id": session_id,
             "timestamp": time.time(),
         }
         _save_cache(cache)

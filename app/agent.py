@@ -325,8 +325,7 @@ general_assistant = Agent(
 root_agent = Agent(
     name="root_agent",
     model=model_config,
-    instruction=_load_prompt("root_agent") + "\n\nCRITICAL: Never execute sub-agent tools directly (e.g. gemini_generate_image, start_radio_station). You must ALWAYS use your transfer_to_* tools to pass the user's request to the appropriate sub-agent.",
-    tools=dj_agent.tools + art_director.tools + general_assistant.tools,
+    instruction=_load_prompt("root_agent"),
     sub_agents=[dj_agent, art_director, general_assistant],
 )
 

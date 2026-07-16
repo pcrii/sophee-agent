@@ -909,7 +909,8 @@ async def execute_agent_turn(
                 await save_text_metadata(
                     str(msgs[0].id),
                     meta.get("agent_name", "unknown"),
-                    meta.get("config", {})
+                    meta.get("config", {}),
+                    session_id=session_id
                 )
         except Exception as e:
             logger.error("Failed to cache text metadata: %s", e)
@@ -992,7 +993,7 @@ async def on_message(message: discord.Message):
 
     # Session IDs
     user_id = str(message.author.id)
-    session_id = f"discord_{message.channel.id}"
+    session_id = f"msg_{message.id}" # Fresh session by default
 
     active_runner = runner
     # Route to isolated session if replying to a cached message
@@ -1007,6 +1008,9 @@ async def on_message(message: discord.Message):
         else:
             text_meta = await get_text_metadata(str(ref_msg.id))
             if text_meta:
+                if text_meta.get("session_id"):
+                    session_id = text_meta.get("session_id")
+                    logger.info("Routing reply to isolated text session: %s", session_id)
                 agent_name = text_meta.get("agent_name")
                 if agent_name == "dj_agent":
                     active_runner = dj_agent_runner

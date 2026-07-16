@@ -453,7 +453,7 @@ async def fetch_new_music_releases(genre: str = "") -> list:
     try:
         def generate():
             return client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.1-flash-lite",
                 contents=query,
                 config=types.GenerateContentConfig(
                     tools=[types.Tool(google_search=types.GoogleSearch())],
