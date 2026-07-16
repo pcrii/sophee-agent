@@ -300,9 +300,10 @@ async def gemini_generate_image(
                 msg += f" Automatically applied processing modes: {', '.join(applied_modes)}."
 
             return {
-                "status": "success",
-                "artifact_name": artifact_name,
-                "message": msg,
+                "result": [
+                    {"type": "text", "text": msg},
+                    {"type": "image", "data": base64.b64encode(image_bytes).decode("utf-8"), "mime_type": mime_type}
+                ]
             }
         else:
             logger.warning(
@@ -391,24 +392,26 @@ async def preprocess_image(
             logger.error("Failed to save preprocessed artifact: %s", save_err)
 
         if False:
+            msg = (
+                f"Filter '{mode}' applied successfully! Stop and show the user this final output artifact. "
+                "Do NOT call generate_image. The chat UI will automatically attach the Reroll button."
+            )
             return {
-                "status": "success",
-                "artifact_name": artifact_name,
-                "message": (
-                    f"Filter '{mode}' applied successfully! Stop and show the user this final output artifact. "
-                    "Do NOT call generate_image. The chat UI will automatically attach the Reroll button."
-                ),
-                "mode": mode,
+                "result": [
+                    {"type": "text", "text": msg},
+                    {"type": "image", "data": processed_b64, "mime_type": "image/png"}
+                ]
             }
 
+        msg = (
+            f"Image preprocessed with '{mode}' mode and set as the active reference. "
+            "Call generate_image to continue."
+        )
         return {
-            "status": "success",
-            "artifact_name": artifact_name,
-            "message": (
-                f"Image preprocessed with '{mode}' mode and set as the active reference. "
-                "Call generate_image to continue."
-            ),
-            "mode": mode,
+            "result": [
+                {"type": "text", "text": msg},
+                {"type": "image", "data": processed_b64, "mime_type": "image/png"}
+            ]
         }
 
     except Exception as e:
