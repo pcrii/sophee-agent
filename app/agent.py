@@ -270,21 +270,6 @@ art_director = Agent(
 
 
 
-researcher = Agent(
-    name="researcher",
-    model=model_config,
-    description="A news researcher and investigator who finds information on current events, compiles summaries, and provides narrative essays on recent news topics.",
-    instruction=_load_prompt("researcher"),
-    tools=[
-        custom_google_search,
-        fetch_google_news,
-        generate_tts,
-        generate_tts_script,
-        get_now_playing,
-        *_user_tools,
-    ],
-)
-
 general_assistant = Agent(
     name="general_assistant",
     model=model_config,
@@ -322,7 +307,7 @@ root_agent = Agent(
     name="root_agent",
     model=model_config,
     instruction=_load_prompt("root_agent"),
-    sub_agents=[dj_agent, art_director, researcher, general_assistant, dm_agent],
+    sub_agents=[dj_agent, art_director, general_assistant, dm_agent],
 )
 
 
