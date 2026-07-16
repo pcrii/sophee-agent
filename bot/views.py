@@ -279,6 +279,80 @@ def create_image_settings_view(session_state: dict, user_id: str, session_id: st
 # LLM Settings View (for /llm_settings command)
 # ---------------------------------------------------------------------------
 
+class LLMAdvancedModal(discord.ui.Modal, title="Advanced LLM Parameters"):
+    """Modal for entering numeric parameters for LLM generation."""
+    temp_input = discord.ui.TextInput(
+        label="Temperature (0.0 to 2.0)",
+        placeholder="Higher = more creative (e.g. 1.0)",
+        required=False,
+    )
+    top_p_input = discord.ui.TextInput(
+        label="Top P (0.0 to 1.0)",
+        placeholder="Higher = more diverse words (e.g. 0.95)",
+        required=False,
+    )
+    top_k_input = discord.ui.TextInput(
+        label="Top K (1 to 40+)",
+        placeholder="Lower = stricter (e.g. 40)",
+        required=False,
+    )
+    pres_input = discord.ui.TextInput(
+        label="Presence Penalty (-2.0 to 2.0)",
+        placeholder="Positive = new topics (e.g. 0.0)",
+        required=False,
+    )
+    freq_input = discord.ui.TextInput(
+        label="Frequency Penalty (-2.0 to 2.0)",
+        placeholder="Positive = less repetition (e.g. 0.0)",
+        required=False,
+    )
+
+    def __init__(self, session_state: dict, update_state_fn, user_id: str, session_id: str):
+        super().__init__()
+        self.session_state = session_state
+        self.update_state_fn = update_state_fn
+        self.user_id = user_id
+        self.session_id = session_id
+        
+        current_temp = session_state.get("llm_temperature")
+        current_top_p = session_state.get("llm_top_p")
+        current_top_k = session_state.get("llm_top_k")
+        current_pres = session_state.get("llm_presence_penalty")
+        current_freq = session_state.get("llm_frequency_penalty")
+        
+        if current_temp is not None: self.temp_input.default = str(current_temp)
+        if current_top_p is not None: self.top_p_input.default = str(current_top_p)
+        if current_top_k is not None: self.top_k_input.default = str(current_top_k)
+        if current_pres is not None: self.pres_input.default = str(current_pres)
+        if current_freq is not None: self.freq_input.default = str(current_freq)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        updates = {
+            "llm_temperature": (self.temp_input.value.strip(), float),
+            "llm_top_p": (self.top_p_input.value.strip(), float),
+            "llm_top_k": (self.top_k_input.value.strip(), int),
+            "llm_presence_penalty": (self.pres_input.value.strip(), float),
+            "llm_frequency_penalty": (self.freq_input.value.strip(), float),
+        }
+        
+        for key, (raw_val, cast_type) in updates.items():
+            if not raw_val:
+                self.session_state.pop(key, None)
+            else:
+                try:
+                    self.session_state[key] = cast_type(raw_val)
+                except ValueError:
+                    await interaction.response.send_message(f"Invalid value for {key}", ephemeral=True)
+                    return
+                
+        await self.update_state_fn(self.user_id, self.session_id, self.session_state)
+        
+        # Redraw the LLM Settings view
+        view = LLMSettingsView(self.session_state, self.update_state_fn, self.user_id, self.session_id)
+        embed = view._build_embed()
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
 class LLMSettingsView(discord.ui.View):
     """Settings panel for the general conversational agent's temperature and thinking level."""
 
@@ -289,20 +363,19 @@ class LLMSettingsView(discord.ui.View):
         self.user_id = user_id
         self.session_id = session_id
 
-        current_temp = str(self.session_state.get("llm_temperature", "none"))
         current_thinking = str(self.session_state.get("llm_thinking_level", "none"))
-
-        for opt in self.llm_temperature_select.options:
-            if opt.value == current_temp:
-                opt.default = True
         for opt in self.llm_thinking_select.options:
             if opt.value == current_thinking:
                 opt.default = True
 
-    async def _refresh(self, interaction: discord.Interaction):
-        await self.update_state_fn(self.user_id, self.session_id, self.session_state)
+    def _build_embed(self) -> discord.Embed:
         current_temp = self.session_state.get("llm_temperature", "model default")
+        current_top_p = self.session_state.get("llm_top_p", "model default")
+        current_top_k = self.session_state.get("llm_top_k", "model default")
+        current_pres = self.session_state.get("llm_presence_penalty", "model default")
+        current_freq = self.session_state.get("llm_frequency_penalty", "model default")
         current_thinking = self.session_state.get("llm_thinking_level", "model default")
+        
         embed = discord.Embed(
             title="🤖 General Assistant Settings",
             description="These settings only affect the **general conversational agent**. Other agents are unaffected.",
@@ -310,31 +383,54 @@ class LLMSettingsView(discord.ui.View):
         )
         embed.add_field(
             name="Current Settings",
-            value=f"**Temperature:** `{current_temp}`\n**Thinking Level:** `{current_thinking}`",
+            value=(
+                f"**Temperature:** `{current_temp}`\n"
+                f"**Top P:** `{current_top_p}`\n"
+                f"**Top K:** `{current_top_k}`\n"
+                f"**Presence Penalty:** `{current_pres}`\n"
+                f"**Frequency Penalty:** `{current_freq}`\n"
+                f"**Thinking Level:** `{current_thinking}`"
+            ),
             inline=False,
         )
         embed.set_footer(text="These settings persist for the duration of your session.")
-        await interaction.response.edit_message(embed=embed, view=LLMSettingsView(
+        return embed
+
+    async def _refresh(self, interaction: discord.Interaction):
+        await self.update_state_fn(self.user_id, self.session_id, self.session_state)
+        await interaction.response.edit_message(embed=self._build_embed(), view=LLMSettingsView(
             self.session_state, self.update_state_fn, self.user_id, self.session_id
         ))
 
     @discord.ui.select(
-        placeholder="Temperature (creativity)",
+        placeholder="Select a Generation Preset",
         options=[
-            discord.SelectOption(label="None (model default)", value="none"),
-            discord.SelectOption(label="0.2 — Very literal / focused", value="0.2"),
-            discord.SelectOption(label="0.5 — Balanced", value="0.5"),
-            discord.SelectOption(label="0.7 — Creative", value="0.7"),
-            discord.SelectOption(label="0.9 — Very creative", value="0.9"),
-            discord.SelectOption(label="1.0 — Maximum randomness", value="1.0"),
+            discord.SelectOption(label="Balanced (Default)", description="Temp: 1.0, Top-P: 0.95", value="balanced"),
+            discord.SelectOption(label="Analytical & Coding", description="Temp: 0.2, Top-P: 0.2, Top-K: 10", value="analytical"),
+            discord.SelectOption(label="Prose / Storytelling", description="Temp: 1.3, Pres: 0.3, Freq: 0.5", value="prose"),
+            discord.SelectOption(label="Songwriting", description="Temp: 1.3, Top-P: 0.99 (Zero Penalties)", value="songwriting"),
+            discord.SelectOption(label="Wild Brainstorming", description="Temp: 1.5, Pres: 0.7, Freq: 0.7", value="wild"),
+            discord.SelectOption(label="Clear Overrides", description="Revert all overrides to model defaults", value="clear"),
         ]
     )
-    async def llm_temperature_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+    async def llm_presets_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         val = select.values[0]
-        if val == "none":
-            self.session_state.pop("llm_temperature", None)
-        else:
-            self.session_state["llm_temperature"] = float(val)
+        
+        # Clear existing
+        for k in ["llm_temperature", "llm_top_p", "llm_top_k", "llm_presence_penalty", "llm_frequency_penalty"]:
+            self.session_state.pop(k, None)
+            
+        if val == "balanced":
+            self.session_state.update({"llm_temperature": 1.0, "llm_top_p": 0.95, "llm_top_k": 40, "llm_presence_penalty": 0.0, "llm_frequency_penalty": 0.0})
+        elif val == "analytical":
+            self.session_state.update({"llm_temperature": 0.2, "llm_top_p": 0.2, "llm_top_k": 10, "llm_presence_penalty": 0.0, "llm_frequency_penalty": 0.0})
+        elif val == "prose":
+            self.session_state.update({"llm_temperature": 1.3, "llm_top_p": 0.99, "llm_top_k": 100, "llm_presence_penalty": 0.3, "llm_frequency_penalty": 0.5})
+        elif val == "songwriting":
+            self.session_state.update({"llm_temperature": 1.3, "llm_top_p": 0.99, "llm_top_k": 100, "llm_presence_penalty": 0.0, "llm_frequency_penalty": 0.0})
+        elif val == "wild":
+            self.session_state.update({"llm_temperature": 1.5, "llm_top_p": 0.99, "llm_top_k": 100, "llm_presence_penalty": 0.7, "llm_frequency_penalty": 0.7})
+            
         await self._refresh(interaction)
 
     @discord.ui.select(
@@ -354,6 +450,11 @@ class LLMSettingsView(discord.ui.View):
         else:
             self.session_state["llm_thinking_level"] = val
         await self._refresh(interaction)
+
+    @discord.ui.button(label="⚙️ Custom Parameters", style=discord.ButtonStyle.secondary)
+    async def custom_params_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Opens a modal for entering exact LLM generation parameters."""
+        await interaction.response.send_modal(LLMAdvancedModal(self.session_state, self.update_state_fn, self.user_id, self.session_id))
 
 
 # ---------------------------------------------------------------------------

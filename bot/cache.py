@@ -102,7 +102,44 @@ async def cleanup_image_metadata():
 
         if expired_count > 0:
             _save_cache(cleaned_cache)
-            logger.info("Purged %d expired image metadata entries (>24h old)", expired_count)
+            logger.info("Cleaned up %d expired cache entries", expired_count)
         else:
             logger.debug("No expired image metadata entries to purge")
 
+
+async def save_text_metadata(
+    message_id: str,
+    agent_name: str,
+    config: dict,
+):
+    """Saves metadata for a generated text response, keyed by the Discord Message ID."""
+    if not message_id:
+        return
+
+    async with _lock:
+        cache = _load_cache()
+
+        if len(cache) >= CACHE_LIMIT:
+            oldest_key = next(iter(cache))
+            cache.pop(oldest_key, None)
+
+        cache[str(message_id)] = {
+            "type": "text",
+            "agent_name": agent_name,
+            "config": config,
+            "timestamp": time.time(),
+        }
+        _save_cache(cache)
+
+
+async def get_text_metadata(message_id: str) -> dict | None:
+    """Retrieves the text metadata dictionary for the given Discord Message ID."""
+    if not message_id:
+        return None
+
+    async with _lock:
+        cache = _load_cache()
+        data = cache.get(str(message_id))
+        if data and data.get("type") == "text":
+            return data
+        return None

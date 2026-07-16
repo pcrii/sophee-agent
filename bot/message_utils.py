@@ -45,21 +45,27 @@ async def send_message_in_chunks(message, text, reference=None, is_thread=False,
     if current_chunk:
         chunks.append(current_chunk)
 
+    sent_messages = []
     for i, chunk in enumerate(chunks):
         try:
             current_embed = embed if i == len(chunks) - 1 else None
             current_view = view if i == len(chunks) - 1 else None
+            sent_msg = None
             if is_thread:
-                await message.send(chunk, embed=current_embed, view=current_view)
+                sent_msg = await message.send(chunk, embed=current_embed, view=current_view)
             elif i == 0 and hasattr(message, "reply"):
-                await message.reply(chunk, embed=current_embed, view=current_view)
+                sent_msg = await message.reply(chunk, embed=current_embed, view=current_view)
             else:
                 if hasattr(message, "send"):
-                    await message.send(chunk, embed=current_embed, view=current_view)
+                    sent_msg = await message.send(chunk, embed=current_embed, view=current_view)
                 else:
-                    await message.channel.send(chunk, embed=current_embed, view=current_view)
-        except discord.errors.HTTPException as e:
-            logger.error("Error sending message chunk: %s", e)
+                    sent_msg = await message.channel.send(chunk, embed=current_embed, view=current_view)
+            if sent_msg:
+                sent_messages.append(sent_msg)
+        except Exception as e:
+            logger.error("Error sending chunk: %s", e)
+
+    return sent_messages
 
 
 

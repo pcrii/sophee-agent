@@ -269,23 +269,9 @@ async def cmd_llm_settings(interaction: discord.Interaction):
     session = await get_or_create_session(user_id, session_id)
     state = session.state if session else {}
 
-    current_temp = state.get("llm_temperature", "model default")
-    current_thinking = state.get("llm_thinking_level", "model default")
-
-    embed = discord.Embed(
-        title="🤖 General Assistant Settings",
-        description="These settings only affect the **general conversational agent** (chit-chat, Q&A, writing, coding). Other agents like the DJ and Art Director are unaffected.",
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="Current Settings",
-        value=f"**Temperature:** `{current_temp}`\n**Thinking Level:** `{current_thinking}`",
-        inline=False,
-    )
-    embed.set_footer(text="These settings persist for the duration of your session.")
-
     from bot.views import LLMSettingsView
     view = LLMSettingsView(state, update_session_state, user_id, session_id)
+    embed = view._build_embed()
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
@@ -851,6 +837,24 @@ async def execute_agent_turn(
         await channel.send(embed=embed, view=view)
         return
 
+    async def _cache_metadata(msgs):
+        if not msgs:
+            return
+        from bot.cache import save_text_metadata
+        try:
+            final_session = await session_service.get_session(app_name=APP_NAME, user_id=user_id, session_id=session_id)
+            if final_session and final_session.state.get("last_llm_metadata"):
+                meta = final_session.state["last_llm_metadata"]
+                await save_text_metadata(
+                    str(msgs[0].id),
+                    meta.get("agent_name", "unknown"),
+                    meta.get("config", {})
+                )
+        except Exception as e:
+            logger.error("Failed to cache text metadata: %s", e)
+
+    sent_msgs = []
+    
     # Handle staged station stop (boot bot from voice channel)
     if session and session.state.get("staged_station_stop"):
         session.state["staged_station_stop"] = False
@@ -873,28 +877,92 @@ async def execute_agent_turn(
 
         if response_text:
             if message_reference:
-                await send_message_in_chunks(message_reference, response_text)
+                sent_msgs = await send_message_in_chunks(message_reference, response_text)
             else:
-                await send_message_in_chunks(channel, response_text)
+                sent_msgs = await send_message_in_chunks(channel, response_text)
+        await _cache_metadata(sent_msgs)
         return
-
 
     # Default: send text response
     if interaction:
         if response_text:
-            await send_message_in_chunks(interaction.followup, response_text, embed=embed, view=view)
+            sent_msgs = await send_message_in_chunks(interaction.followup, response_text, embed=embed, view=view)
         elif embed:
-            await interaction.followup.send(embed=embed, view=view)
+            m = await interaction.followup.send(embed=embed, view=view)
+            sent_msgs = [m]
     else:
         target = message_reference if message_reference else channel
         if response_text:
-            await send_message_in_chunks(target, response_text, embed=embed, view=view)
+            sent_msgs = await send_message_in_chunks(target, response_text, embed=embed, view=view)
         else:
             if message_reference and hasattr(message_reference, "reply"):
-                await message_reference.reply(content="I processed your request but have no text response.", embed=embed, view=view)
+                m = await message_reference.reply(content="I processed your request but have no text response.", embed=embed, view=view)
+                sent_msgs = [m]
             else:
-                await channel.send(content="I processed your request but have no text response.", embed=embed, view=view)
+                m = await channel.send(content="I processed your request but have no text response.", embed=embed, view=view)
+                sent_msgs = [m]
+                
+    await _cache_metadata(sent_msgs)
 
+
+@client.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    # Only handle the 🔍 reaction
+    if str(payload.emoji) != "🔍":
+        return
+
+    # Ignore bot reactions
+    if payload.user_id == client.user.id:
+        return
+
+    # Fetch message
+    channel = client.get_channel(payload.channel_id)
+    if not channel:
+        try:
+            channel = await client.fetch_channel(payload.channel_id)
+        except Exception:
+            return
+
+    try:
+        message = await channel.fetch_message(payload.message_id)
+    except Exception:
+        return
+
+    # Only respond to our own messages
+    if message.author.id != client.user.id:
+        return
+
+    # Fetch text metadata from cache
+    from bot.cache import get_text_metadata
+    metadata = await get_text_metadata(str(payload.message_id))
+    
+    if metadata:
+        user = client.get_user(payload.user_id) or await client.fetch_user(payload.user_id)
+        
+        # Format the metadata beautifully
+        config = metadata.get("config", {})
+        
+        # Remove empty values to keep it clean
+        clean_config = {k: v for k, v in config.items() if v is not None}
+        
+        import json
+        config_str = json.dumps(clean_config, indent=2)
+        if config_str == "{}":
+            config_str = "No specific overrides (using Gemini defaults)"
+            
+        embed = discord.Embed(
+            title="🔍 LLM Generation Metadata",
+            description=f"You inspected [this message]({message.jump_url}). Here is the exact routing and configuration used:",
+            color=0x00FF00,
+        )
+        embed.add_field(name="Agent Router", value=f"`{metadata.get('agent_name', 'unknown')}`", inline=False)
+        embed.add_field(name="Configuration Payload", value=f"```json\n{config_str}\n```", inline=False)
+        embed.set_footer(text=f"Timestamp: {metadata.get('timestamp')}")
+        
+        try:
+            await user.send(embed=embed)
+        except Exception as e:
+            logger.warning(f"Could not DM user {payload.user_id} with metadata: {e}")
 
 @client.event
 async def on_message(message: discord.Message):

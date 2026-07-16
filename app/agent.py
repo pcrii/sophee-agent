@@ -264,11 +264,47 @@ art_director = Agent(
 
 
 
+async def apply_llm_settings_callback(agent, session, llm_request):
+    state = session.state
+    temp = state.get("llm_temperature")
+    top_p = state.get("llm_top_p")
+    top_k = state.get("llm_top_k")
+    pres_pen = state.get("llm_presence_penalty")
+    freq_pen = state.get("llm_frequency_penalty")
+
+    if any(x is not None for x in [temp, top_p, top_k, pres_pen, freq_pen]):
+        if llm_request.config is None:
+            llm_request.config = types.GenerateContentConfig()
+        if temp is not None:
+            llm_request.config.temperature = temp
+        if top_p is not None:
+            llm_request.config.top_p = top_p
+        if top_k is not None:
+            llm_request.config.top_k = top_k
+        if pres_pen is not None:
+            llm_request.config.presence_penalty = pres_pen
+        if freq_pen is not None:
+            llm_request.config.frequency_penalty = freq_pen
+
+    # Save metadata so Discord can cache it on the message ID for debugging
+    state["last_llm_metadata"] = {
+        "agent_name": agent.name,
+        "config": {
+            "temperature": getattr(llm_request.config, "temperature", None) if llm_request.config else None,
+            "top_p": getattr(llm_request.config, "top_p", None) if llm_request.config else None,
+            "top_k": getattr(llm_request.config, "top_k", None) if llm_request.config else None,
+            "presence_penalty": getattr(llm_request.config, "presence_penalty", None) if llm_request.config else None,
+            "frequency_penalty": getattr(llm_request.config, "frequency_penalty", None) if llm_request.config else None,
+        }
+    }
+
+
 general_assistant = Agent(
     name="general_assistant",
     model=model_config,
     description="A clean, helpful, and unbiased conversational assistant for general questions, chit-chat, Q&A, writing, and coding.",
     instruction=_load_prompt("general_assistant"),
+    before_model_callback=apply_llm_settings_callback,
     tools=[
         custom_google_search,
         fetch_google_news,
