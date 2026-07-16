@@ -134,6 +134,14 @@ async def trim_session_history(session_service, app_name: str, user_id: str, ses
         if last_activity_time > 0 and time_inactive > 14400:
             trimmed_count = len(session.events)
             session.events = []
+            
+            # WIPE server-side interactions history chain
+            # The Interactions API caches the conversation on Google's servers.
+            # If we don't delete this ID, ADK will pass it and resume the conversation from yesterday!
+            keys_to_delete = [k for k in getattr(session, 'state', {}) if 'interaction' in k.lower()]
+            for k in keys_to_delete:
+                del session.state[k]
+
             await _db_clear_events(app_name, user_id, session_id)
             logger.info(
                 "Flushed all %d history events from session %s due to inactivity (inactive for %.1fh)",
