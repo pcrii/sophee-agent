@@ -300,6 +300,15 @@ async def context_debug_llm(interaction: discord.Interaction, message: discord.M
             color=0x00FF00,
         )
         embed.add_field(name="Agent Router", value=f"`{metadata.get('agent_name', 'unknown')}`", inline=False)
+        
+        history_len = metadata.get("history_length", 0)
+        roles = metadata.get("history_roles", [])
+        if history_len > 0:
+            history_str = f"Payload contains `{history_len}` total interaction turns.\n**Sequence:** " + ", ".join([f"`{r}`" for r in roles])
+        else:
+            history_str = "No history payload detected. (Using Session Compaction or Stateless API)"
+            
+        embed.add_field(name="Context Scope", value=history_str, inline=False)
         embed.add_field(name="Configuration Payload", value=f"```json\n{config_str}\n```", inline=False)
         embed.set_footer(text=f"Timestamp: {metadata.get('timestamp')}")
         

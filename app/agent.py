@@ -289,6 +289,8 @@ async def apply_llm_settings_callback(*, callback_context, llm_request, **kwargs
     # Save metadata so Discord can cache it on the message ID for debugging
     state["last_llm_metadata"] = {
         "agent_name": "general_assistant",
+        "history_length": len(llm_request.contents) if llm_request.contents else 0,
+        "history_roles": [c.role for c in llm_request.contents] if llm_request.contents else [],
         "config": {
             "temperature": getattr(llm_request.config, "temperature", None) if llm_request.config else None,
             "top_p": getattr(llm_request.config, "top_p", None) if llm_request.config else None,
