@@ -264,7 +264,7 @@ art_director = Agent(
 
 
 
-async def apply_llm_settings_callback(agent, session, llm_request):
+async def apply_llm_settings_callback(agent, session, llm_request, **kwargs):
     state = session.state
     temp = state.get("llm_temperature")
     top_p = state.get("llm_top_p")
