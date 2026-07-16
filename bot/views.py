@@ -1214,9 +1214,7 @@ class BaseProcessView(discord.ui.View):
             label_map = {
                 "canny": "📐 Canny", "sketch": "✏️ Sketch", "posterize": "🎨 Posterize", "blur": "🌫️ Blur", 
                 "smart_crop": "🎯 Smart Crop", "rembg": "✂️ Remove BG", "remove_bg_gemini": "✂️ Remove BG",
-                "remove_whitespace": "⬜ Remove White", "remove_text": "📝 Remove Text", 
-                "riso_sticker": "🖨️ Riso Sticker", "riso_duotone": "🖨️ Riso Duotone", "riso_multiply": "🖨️ Riso Multiply",
-                "riso_tritone": "🖨️ Riso Tritone", "riso_sticker_book": "🖨️ Sticker Book"
+                "remove_whitespace": "⬜ Remove White", "remove_text": "📝 Remove Text",
             }
             label = label_map.get(mode, mode.title())
             channel = self.source_message.channel
@@ -1280,25 +1278,6 @@ class PostProcessView(BaseProcessView):
 
 class FiltersView(BaseProcessView):
     """Ephemeral panel for final stylistic filters."""
-    @discord.ui.button(label="🖨️ Riso Sticker", style=discord.ButtonStyle.primary)
-    async def riso_sticker_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "riso_sticker")
-
-    @discord.ui.button(label="🖨️ Riso Duotone", style=discord.ButtonStyle.primary)
-    async def riso_duotone_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "riso_duotone")
-
-    @discord.ui.button(label="🖨️ Riso Multiply", style=discord.ButtonStyle.primary)
-    async def riso_multiply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "riso_multiply")
-
-    @discord.ui.button(label="🖨️ Sticker Book", style=discord.ButtonStyle.primary, row=1)
-    async def riso_sticker_book_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "riso_sticker_book")
-
-    @discord.ui.button(label="🖨️ Riso Tritone", style=discord.ButtonStyle.primary, row=1)
-    async def riso_tritone_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._apply_and_post(interaction, "riso_tritone")
 
 
 # ---------------------------------------------------------------------------

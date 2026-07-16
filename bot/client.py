@@ -1048,9 +1048,17 @@ async def on_message(message: discord.Message):
             if result:
                 image_data = result
                 break
-    elif message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message):
+    elif message.reference and message.reference.message_id:
+        # resolved is only populated if the message is cached — fetch it if not
         ref_msg = message.reference.resolved
-        if ref_msg.attachments:
+        if ref_msg is None:
+            try:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+            except Exception as fetch_err:
+                logger.warning("Could not fetch referenced message for image grab: %s", fetch_err)
+                ref_msg = None
+                
+        if ref_msg and isinstance(ref_msg, discord.Message) and ref_msg.attachments:
             for attachment in ref_msg.attachments:
                 result = await read_image_attachment(attachment)
                 if result:

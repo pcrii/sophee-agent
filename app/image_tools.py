@@ -333,7 +333,7 @@ async def preprocess_image(
     - Create an abstract version before a style transfer
     - Chain preprocessing with generation: call this first, then call generate_image
     
-    IMPORTANT: For FINAL stylistic filters like the Riso modes ('riso_sticker', 'riso_duotone', 'riso_tritone', 'riso_multiply', 'riso_sticker_book'), do NOT call `generate_image` after. Just call this tool and stop, telling the user you've applied the filter!
+    IMPORTANT: For FINAL stylistic filters like the Riso modes (), do NOT call `generate_image` after. Just call this tool and stop, telling the user you've applied the filter!
 
     Args:
         mode: The preprocessing transform to apply:
@@ -346,14 +346,7 @@ async def preprocess_image(
             - 'remove_bg_gemini': Removes the background using an AI-generated silhouette mask. Best for photos and complex scenes with natural edges.
             - 'custom_mask_gemini': Removes specific elements based on the `prompt`. Specify what to keep/remove in the prompt (e.g. 'keep the head, remove the body and arm').
             - 'remove_whitespace': Removes white and near-white pixels (chroma-key). Instant, no API call. Best for flat graphics, logos, icons, and emoji-style art with solid white backgrounds.
-            - 'remove_text': Uses AI to remove typography/text while preserving the scene.
-            - 'riso_sticker': Applies a Risograph print aesthetic (Sticker style).
-            - 'riso_duotone': Applies a Risograph print aesthetic (Duotone style).
-            - 'riso_tritone': Applies a Risograph print aesthetic (Tritone style).
-            - 'riso_multiply': Applies a Risograph print aesthetic (Multiply style).
-            - 'riso_sticker_book': Applies a Risograph print aesthetic (Sticker Book style).
-
-    Returns:
+            - 'remove_text': Uses AI to remove typography/text while preserving the scene.    Returns:
         A dict with status and the artifact name of the preprocessed image (shown to user as a preview).
     """
     import base64
@@ -371,15 +364,12 @@ async def preprocess_image(
     try:
         raw_bytes = base64.b64decode(latest_img["data"])
         mode = mode.lower().strip()
-        
-        if mode == "riso_pop":
-            mode = random.choice(["riso_sticker", "riso_duotone", "riso_tritone", "riso_multiply", "riso_sticker_book"])
 
         processed_bytes = await preprocess_image_bytes(raw_bytes, mode, prompt=prompt)
         if not processed_bytes:
             return {
                 "status": "error",
-                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, custom_mask_gemini, remove_text, riso_sticker, riso_duotone, riso_tritone, riso_multiply, riso_sticker_book.",
+                "message": f"Unknown mode '{mode}' or processing failed. Valid options: canny, sketch, posterize, blur, smart_crop, rembg, custom_mask_gemini, remove_text.",
             }
 
         processed_b64 = base64.b64encode(processed_bytes).decode("utf-8")
@@ -400,7 +390,7 @@ async def preprocess_image(
         except Exception as save_err:
             logger.error("Failed to save preprocessed artifact: %s", save_err)
 
-        if mode.startswith("riso_"):
+        if False:
             return {
                 "status": "success",
                 "artifact_name": artifact_name,
@@ -513,333 +503,6 @@ async def preprocess_image_bytes(raw_bytes: bytes, mode: str, prompt: str = None
                 rgba_array[:, :, :3] = img_array
                 rgba_array[:, :, 3] = mask2 * 255
                 processed = Image.fromarray(rgba_array, "RGBA")
-
-        elif mode.startswith("riso_"):
-            import numpy as _np
-            import colorsys
-            from PIL import ImageEnhance
-
-            width, height = pil_img.size
-            img_array = _np.array(pil_img.convert("RGB"))
-            
-            riso_colors = [
-                (0, 168, 225), (230, 0, 126), (255, 237, 0), (255, 72, 176),
-                (241, 80, 96), (130, 216, 213), (118, 91, 167), (255, 108, 47),
-                (60, 60, 60), (0, 120, 191), (0, 169, 92)
-            ]
-            
-            def get_dominant_color(rgb_arr, mask_arr=None):
-                if mask_arr is not None:
-                    fg_pixels = rgb_arr[mask_arr == 1]
-                else:
-                    indices = _np.random.choice(rgb_arr.shape[0] * rgb_arr.shape[1], size=min(10000, rgb_arr.shape[0]*rgb_arr.shape[1]), replace=False)
-                    fg_pixels = rgb_arr.reshape(-1, 3)[indices]
-                if len(fg_pixels) == 0: return (128, 128, 128)
-                avg = _np.mean(fg_pixels, axis=0)
-                return (int(avg[0]), int(avg[1]), int(avg[2]))
-
-            def color_distance_hue(rgb1, rgb2):
-                h1, _, _ = colorsys.rgb_to_hsv(rgb1[0]/255.0, rgb1[1]/255.0, rgb1[2]/255.0)
-                h2, _, _ = colorsys.rgb_to_hsv(rgb2[0]/255.0, rgb2[1]/255.0, rgb2[2]/255.0)
-                diff = abs(h1 - h2)
-                return min(diff, 1.0 - diff)
-                
-            if mode in ("riso_sticker", "riso_sticker_book"):
-                from google import genai
-                import os
-                import json
-                import re
-                import cv2
-                import random
-                
-                api_key = os.getenv("GEMINI_API_KEY")
-                client = genai.Client(api_key=api_key)
-                
-                max_subjects = 3 if mode == "riso_sticker" else 10
-                prompt = (
-                    f"Analyze this image and find the main subjects or characters (up to {max_subjects}). "
-                    "For each subject, return a bounding box in the format [ymin, xmin, ymax, xmax]. "
-                    "The coordinates must be integers from 0 to 1000. "
-                    "Return ONLY a JSON list of lists, e.g. [[ymin, xmin, ymax, xmax], [ymin, xmin, ymax, xmax]]."
-                )
-                
-                import base64
-                b64_data = base64.b64encode(raw_bytes).decode("utf-8")
-                interaction = await client.aio.interactions.create(
-                    model="gemini-3.1-flash-lite",
-                    input=[
-                        {"type": "text", "text": prompt},
-                        {"type": "image", "data": b64_data, "mime_type": "image/png"}
-                    ],
-                )
-                
-                response_text = getattr(interaction, "output_text", "") or ""
-                match = re.search(r"\[\s*\[.*?\]\s*\]", response_text, re.DOTALL)
-                if not match:
-                    raise ValueError(f"Could not parse bounding boxes from Gemini response: {response_text}")
-                    
-                boxes = json.loads(match.group(0))[:max_subjects]
-                
-                import asyncio
-                def _run_grabcut(img, r):
-                    mask = _np.zeros(img.shape[:2], _np.uint8)
-                    bgdModel = _np.zeros((1, 65), _np.float64)
-                    fgdModel = _np.zeros((1, 65), _np.float64)
-                    cv2.grabCut(img, mask, r, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-                    return _np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-                
-                tasks = []
-                for box in boxes:
-                    ymin, xmin, ymax, xmax = box
-                    x1, y1 = max(0, int((xmin / 1000) * width)), max(0, int((ymin / 1000) * height))
-                    x2, y2 = min(width, int((xmax / 1000) * width)), min(height, int((ymax / 1000) * height))
-                    rect = (x1, y1, x2 - x1, y2 - y1)
-                    if rect[2] <= 0 or rect[3] <= 0: continue
-                    tasks.append(asyncio.to_thread(_run_grabcut, img_array, rect))
-                    
-                subject_masks = await asyncio.gather(*tasks)
-                
-                combined_fg_mask = _np.zeros((height, width), dtype=_np.uint8)
-                for m in subject_masks:
-                    combined_fg_mask = _np.maximum(combined_fg_mask, m)
-                    
-                def create_dithered_layer(rgb_arr, mask_arr, color_tuple=None):
-                    layer_rgb = rgb_arr.copy()
-                    layer_rgb[mask_arr == 0] = [255, 255, 255]
-                    layer_pil = Image.fromarray(layer_rgb).convert("L")
-                    layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.8).convert("1").convert("L")
-                    dither_arr = _np.array(layer_pil)
-                    rgba = _np.zeros((layer_rgb.shape[0], layer_rgb.shape[1], 4), dtype=_np.uint8)
-                    if color_tuple is None:
-                        rgba[dither_arr < 128] = [20, 20, 20, 255]
-                    else:
-                        rgba[dither_arr < 128] = [*color_tuple, 255]
-                    return Image.fromarray(rgba, "RGBA")
-                    
-                canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
-                
-                if mode == "riso_sticker":
-                    bg_mask = 1 - combined_fg_mask
-                    canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, None))
-                else: # riso_sticker_book
-                    # Bright mixed media! Off-white paper background
-                    bg_rgba = _np.full((height, width, 4), [250, 245, 240, 255], dtype=_np.uint8)
-                    canvas.alpha_composite(Image.fromarray(bg_rgba, "RGBA"))
-                    
-                    # Dither the background elements in a bright neon color
-                    avg_bg_rgb = get_dominant_color(img_array, 1 - combined_fg_mask)
-                    h, _, _ = colorsys.rgb_to_hsv(avg_bg_rgb[0]/255.0, avg_bg_rgb[1]/255.0, avg_bg_rgb[2]/255.0)
-                    bg_neon = min(riso_colors, key=lambda c: color_distance_hue(c, tuple(int(x*255) for x in colorsys.hsv_to_rgb((h + 0.1) % 1.0, 1, 1))))
-                    
-                    bg_mask = 1 - combined_fg_mask
-                    canvas.alpha_composite(create_dithered_layer(img_array, bg_mask, bg_neon))
-                    
-                    # Leave a soft colorful ink burn where the stickers were
-                    shadow_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                    shadow_rgba[combined_fg_mask == 1] = [*bg_neon, 60]
-                    canvas.alpha_composite(Image.fromarray(shadow_rgba, "RGBA"))
-                
-                for i, s_mask in enumerate(subject_masks):
-                    avg_rgb = get_dominant_color(img_array, s_mask)
-                    h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
-                    target_hue = (h + 0.5) % 1.0
-                    target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
-                    s_color = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb))
-                    
-                    if mode == "riso_sticker":
-                        sticker_bg = _np.zeros((height, width, 4), dtype=_np.uint8)
-                        sticker_bg[s_mask == 1] = [*s_color, 255]
-                        canvas.alpha_composite(Image.fromarray(sticker_bg, "RGBA"))
-                        canvas.alpha_composite(create_dithered_layer(img_array, s_mask, (20, 20, 20)))
-                    else:
-                        # Sticker Book: drift, rotate, no stroke
-                        # Crop to bounding box of the mask to rotate it
-                        y_indices, x_indices = _np.where(s_mask == 1)
-                        if len(y_indices) == 0: continue
-                        min_y, max_y = y_indices.min(), y_indices.max()
-                        min_x, max_x = x_indices.min(), x_indices.max()
-                        
-                        cropped_mask = s_mask[min_y:max_y+1, min_x:max_x+1]
-                        cropped_img = img_array[min_y:max_y+1, min_x:max_x+1]
-                        
-                        sticker_dither = create_dithered_layer(cropped_img, cropped_mask, s_color)
-                        
-                        # Rotate and drift
-                        angle = random.uniform(-10, 10)
-                        dx = random.randint(-20, 20)
-                        dy = random.randint(-20, 20)
-                        
-                        sticker_dither = sticker_dither.rotate(angle, expand=True, fillcolor=(0,0,0,0))
-                        
-                        # Calculate paste coordinates
-                        paste_x = min_x + dx - (sticker_dither.width - (max_x - min_x)) // 2
-                        paste_y = min_y + dy - (sticker_dither.height - (max_y - min_y)) // 2
-                        
-                        temp_canvas = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-                        temp_canvas.paste(sticker_dither, (paste_x, paste_y), sticker_dither)
-                        canvas.alpha_composite(temp_canvas)
-                    
-                processed = canvas.convert("RGB")
-                
-            elif mode == "riso_duotone":
-                import random
-                avg_rgb = get_dominant_color(img_array)
-                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
-                
-                c1_distances = [(c, color_distance_hue(c, avg_rgb)) for c in riso_colors]
-                c1_distances.sort(key=lambda x: x[1])
-                # Pick one of the top 3 closest colors to the dominant hue
-                c1 = random.choice([c[0] for c in c1_distances[:3]])
-                
-                # Pick a random color harmony for the second color (complementary, triadic, analogous)
-                target_hue = random.choice([
-                    (h + 0.5) % 1.0,
-                    (h + 0.33) % 1.0,
-                    (h + 0.66) % 1.0,
-                    (h + 0.15) % 1.0,
-                    (h - 0.15) % 1.0,
-                ])
-                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
-                
-                c2_candidates = [c for c in riso_colors if c != c1]
-                c2_distances = [(c, color_distance_hue(c, target_rgb)) for c in c2_candidates]
-                c2_distances.sort(key=lambda x: x[1])
-                # Pick one of the top 2 closest colors to the target hue
-                c2 = random.choice([c[0] for c in c2_distances[:2]])
-                
-                c_dark, c_light = sorted([c1, c2], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
-                
-                # Convert to grayscale but keep the smooth tones for tone-mapping
-                layer_pil = Image.fromarray(img_array).convert("L")
-                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.2)
-                
-                # This applies a smooth gradient map (tone mapping)
-                processed = ImageOps.colorize(layer_pil, black=c_dark, white=c_light)
-                
-                # Add canny map overlay
-                import cv2
-                # Slightly blur to remove noise before edge detection
-                gray_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-                blurred = cv2.GaussianBlur(gray_cv, (5, 5), 0)
-                edges = cv2.Canny(blurred, threshold1=40, threshold2=120)
-                
-                # Dilate to make strokes thicker and fuller
-                kernel = _np.ones((2, 2), _np.uint8)
-                edges = cv2.dilate(edges, kernel, iterations=1)
-                
-                # Create a dynamic blend layer instead of a solid color
-                # 128 (50% gray) does nothing in Overlay blend mode. 
-                # 255 (white) dodges/brightens the underlying color. 0 (black) burns/darkens.
-                # We'll use white for the stroke to dynamically dodge the duotone colors underneath!
-                blend_arr = _np.full((height, width, 3), 128, dtype=_np.uint8)
-                blend_arr[edges > 0] = [255, 255, 255] 
-                
-                from PIL import ImageChops
-                processed = ImageChops.overlay(processed, Image.fromarray(blend_arr, "RGB"))
-
-            elif mode == "riso_tritone":
-                import random
-                import io
-                from google import genai
-                import os
-                import base64
-                import cv2
-                import asyncio
-                
-                api_key = os.getenv("GEMINI_API_KEY")
-                client = genai.Client(api_key=api_key)
-                b64_data = base64.b64encode(raw_bytes).decode("utf-8")
-                
-                # 1. Generate Local Canny Map
-                gray_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-                blurred = cv2.GaussianBlur(gray_cv, (5, 5), 0)
-                edges_local = cv2.Canny(blurred, threshold1=40, threshold2=120)
-                _, buffer = cv2.imencode('.png', edges_local)
-                edges_b64 = base64.b64encode(buffer).decode("utf-8")
-                
-                # 2. Async API calls for Masking and Tracing
-                async def get_mask():
-                    return await client.aio.interactions.create(
-                        model="gemini-3.1-flash-image",
-                        input=[
-                            {"type": "text", "text": "Output a pure black and white silhouette mask where the foreground subject is solid white and the background is pure black."},
-                            {"type": "image", "data": b64_data, "mime_type": "image/png"}
-                        ],
-                    )
-
-                async def get_trace():
-                    return await client.aio.interactions.create(
-                        model="gemini-3.1-flash-image",
-                        input=[
-                            {"type": "text", "text": "Redraw this edge map as a minimalist, continuous ink line-art drawing. Use clean, smooth, abstract strokes. Solid white lines on a pure black background. No shading."},
-                            {"type": "image", "data": edges_b64, "mime_type": "image/png"}
-                        ],
-                    )
-                    
-                mask_interaction, trace_interaction = await asyncio.gather(get_mask(), get_trace())
-                
-                # Decode Mask
-                mask_bytes = base64.b64decode(mask_interaction.output_image.data)
-                mask_pil = Image.open(io.BytesIO(mask_bytes)).convert("L").resize((width, height))
-                
-                # Decode Trace
-                trace_bytes = base64.b64decode(trace_interaction.output_image.data)
-                ai_lines_pil = Image.open(io.BytesIO(trace_bytes)).convert("L").resize((width, height))
-                edges = _np.array(ai_lines_pil)
-                
-                # 3. Tone map colors
-                avg_rgb = get_dominant_color(img_array)
-                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
-                
-                c1 = min(riso_colors, key=lambda c: color_distance_hue(c, avg_rgb))
-                target_rgb_2 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.15) % 1.0, 1, 1))
-                c2 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb_2) if c != c1 else 999)
-                target_rgb_3 = tuple(int(x * 255) for x in colorsys.hsv_to_rgb((h + 0.5) % 1.0, 1, 1))
-                c3 = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb_3) if c not in (c1, c2) else 999)
-                
-                c_dark, c_mid, c_light = sorted([c1, c2, c3], key=lambda c: 0.299*c[0] + 0.587*c[1] + 0.114*c[2])
-                
-                # Create a tritone colored version of the original image
-                layer_pil = Image.fromarray(img_array).convert("L")
-                layer_pil = ImageEnhance.Contrast(layer_pil).enhance(1.2)
-                tritone_img = ImageOps.colorize(layer_pil, black=c_dark, white=c_light, mid=c_mid)
-                
-                # 4. Blending & Flair on Top
-                # We blend the Tritone layer over the Original image, using the LLM Mask!
-                from PIL import ImageChops
-                # Overlay the tritone to add "flair" without replacing the image entirely
-                blended_flair = ImageChops.overlay(Image.fromarray(img_array), tritone_img)
-                # Apply only to the masked foreground
-                processed = Image.composite(blended_flair, Image.fromarray(img_array), mask_pil)
-                
-                # 5. Composite AI strokes
-                edges_pil = Image.fromarray(edges)
-                dx, dy = random.randint(3, 8), random.randint(3, 8)
-                shifted_edges = ImageChops.offset(edges_pil, dx, dy)
-                
-                stroke_rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                stroke_rgba[..., :3] = c_light
-                stroke_rgba[..., 3] = _np.array(shifted_edges)
-                
-                processed = processed.convert("RGBA")
-                processed.alpha_composite(Image.fromarray(stroke_rgba, "RGBA"))
-                processed = processed.convert("RGB")
-
-            elif mode == "riso_multiply":
-                avg_rgb = get_dominant_color(img_array)
-                h, _, _ = colorsys.rgb_to_hsv(avg_rgb[0]/255.0, avg_rgb[1]/255.0, avg_rgb[2]/255.0)
-                
-                target_hue = (h + 0.5) % 1.0
-                target_rgb = tuple(int(x * 255) for x in colorsys.hsv_to_rgb(target_hue, 1, 1))
-                c_neon = min(riso_colors, key=lambda c: color_distance_hue(c, target_rgb))
-                
-                gray_arr = _np.array(Image.fromarray(img_array).convert("L").convert("RGB")).astype(_np.float32) / 255.0
-                
-                rgba = _np.zeros((height, width, 4), dtype=_np.uint8)
-                rgba[..., :3] = (gray_arr * _np.array(c_neon, dtype=_np.float32)).astype(_np.uint8)
-                rgba[..., 3] = 255
-                
-                processed = Image.fromarray(rgba, "RGBA").convert("RGB")
 
         elif mode == "remove_bg_gemini":
             from google import genai

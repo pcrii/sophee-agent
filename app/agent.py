@@ -110,16 +110,32 @@ def _load_prompt(name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Monkey Patch ADK Interactions API Tool Formatting
+# (Fixes a bug in the ADK library where parameterless tools cause a 400 crash)
+# ---------------------------------------------------------------------------
+import google.adk.models.interactions_utils as _adk_int_utils
+
+_orig_convert = _adk_int_utils.convert_tools_config_to_interactions_format
+
+def _patched_convert(config):
+    tools = _orig_convert(config)
+    for t in tools:
+        if t.get("type") == "function" and "parameters" not in t:
+            t["parameters"] = {"type": "object", "properties": {}}
+    return tools
+
+_adk_int_utils.convert_tools_config_to_interactions_format = _patched_convert
+
+# ---------------------------------------------------------------------------
 # Model configuration
-# NOTE: DO NOT use the Gemini Interactions API (use_interactions_api=True)
-# here or in any helper tools. The Interactions API currently breaks
-# automatic function calling (Python), which ADK relies on for agent tools.
-# Always use the standard generate_content API (the default).
+# Note: Enabled Interactions API to leverage server-side conversational 
+# history instead of sending huge context blocks.
 # ---------------------------------------------------------------------------
 
 model_config = Gemini(
     model="gemini-3.1-flash-lite",
     retry_options=types.HttpRetryOptions(attempts=3),
+    use_interactions_api=True,
 )
 
 
