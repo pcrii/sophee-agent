@@ -44,7 +44,7 @@ class SuggestionsUpdateRequest(BaseModel):
 def create_app():
     """Creates and configures the FastAPI application."""
     from google.adk.artifacts import FileArtifactService
-    from google.adk.sessions import DatabaseSessionService
+    from app.db import session_service
     from google.adk.runners import Runner
     from app.agent import root_agent
 
@@ -56,7 +56,7 @@ def create_app():
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     artifacts_dir = os.path.join(project_root, "data", "artifacts")
 
-    session_service = DatabaseSessionService(db_url="sqlite+aiosqlite:///sessions.db")
+
     artifact_service = FileArtifactService(root_dir=artifacts_dir)
 
     runner = Runner(
@@ -361,31 +361,7 @@ def create_app():
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    @app.get("/api/debug/image-payload")
-    async def get_last_image_payload():
-        """Returns the last payload sent to the image generation API."""
-        import json
-        payload_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_payload.json")
-        try:
-            with open(payload_path) as f:
-                return {"status": "success", "payload": json.load(f)}
-        except FileNotFoundError:
-            return {"status": "error", "message": "No image payload recorded yet."}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
 
-    @app.get("/api/debug/last-image-out")
-    async def get_last_image_out():
-        """Returns the raw string output of the last interaction API call."""
-        import os
-        out_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "last_image_out.json")
-        try:
-            with open(out_path, "r", encoding="utf-8") as f:
-                return {"status": "success", "content": f.read()}
-        except FileNotFoundError:
-            return {"status": "error", "message": "No output recorded yet."}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
 
 
     app.include_router(api_router)

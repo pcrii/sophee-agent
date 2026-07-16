@@ -106,7 +106,10 @@ def _load_prompt(name: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Monkey Patch ADK Interactions API Tool Formatting
-# (Fixes a bug in the ADK library where parameterless tools cause a 400 crash)
+# VERIFIED STILL NEEDED as of google-adk==2.3.0 (July 2026)
+# Bug 1: Parameterless tools omit 'parameters' key, causing API 400 errors
+# Bug 2: FunctionCallStep model lacks 'signature' field, causing AttributeError
+# TODO: Remove when ADK fixes these upstream
 # ---------------------------------------------------------------------------
 import google.adk.models.interactions_utils as _adk_int_utils
 
