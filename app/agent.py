@@ -126,6 +126,32 @@ def _patched_convert(config):
 
 _adk_int_utils.convert_tools_config_to_interactions_format = _patched_convert
 
+_orig_convert_step = _adk_int_utils._convert_interaction_step_to_parts
+
+def _patched_convert_step(step):
+    # Fixes AttributeError: 'FunctionCallStep' object has no attribute 'signature'
+    if type(step).__name__ == "FunctionCallStep":
+        from google.genai import types
+        step_id = getattr(step, "id", "")
+        step_name = getattr(step, "name", "")
+        step_args = getattr(step, "arguments", {})
+        step_sig = getattr(step, "signature", None)
+        thought_sig = _adk_int_utils._decode_base64_string(step_sig) if step_sig else None
+        
+        return [
+            types.Part(
+                function_call=types.FunctionCall(
+                    id=step_id,
+                    name=step_name,
+                    args=step_args or {},
+                ),
+                thought_signature=thought_sig,
+            )
+        ]
+    return _orig_convert_step(step)
+
+_adk_int_utils._convert_interaction_step_to_parts = _patched_convert_step
+
 # ---------------------------------------------------------------------------
 # Model configuration
 # Note: Enabled Interactions API to leverage server-side conversational 
