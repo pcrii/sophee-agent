@@ -264,8 +264,8 @@ art_director = Agent(
 
 
 
-async def apply_llm_settings_callback(agent, session, llm_request, **kwargs):
-    state = session.state
+async def apply_llm_settings_callback(*, callback_context, llm_request, **kwargs):
+    state = callback_context.state
     temp = state.get("llm_temperature")
     top_p = state.get("llm_top_p")
     top_k = state.get("llm_top_k")
@@ -288,7 +288,7 @@ async def apply_llm_settings_callback(agent, session, llm_request, **kwargs):
 
     # Save metadata so Discord can cache it on the message ID for debugging
     state["last_llm_metadata"] = {
-        "agent_name": agent.name,
+        "agent_name": "general_assistant",
         "config": {
             "temperature": getattr(llm_request.config, "temperature", None) if llm_request.config else None,
             "top_p": getattr(llm_request.config, "top_p", None) if llm_request.config else None,
