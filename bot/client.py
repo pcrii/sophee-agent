@@ -79,6 +79,21 @@ runner = Runner(
     artifact_service=artifact_service,
 )
 
+from app.agent import art_director, dj_agent
+art_director_runner = Runner(
+    agent=art_director,
+    app_name=APP_NAME,
+    session_service=session_service,
+    artifact_service=artifact_service,
+)
+
+dj_agent_runner = Runner(
+    agent=dj_agent,
+    app_name=APP_NAME,
+    session_service=session_service,
+    artifact_service=artifact_service,
+)
+
 # ---------------------------------------------------------------------------
 # Rate limiter
 # ---------------------------------------------------------------------------
@@ -389,6 +404,7 @@ async def execute_agent_turn(
     message_reference=None,
     image_data=None,
     interaction=None,
+    active_runner=None,
 ):
     """Executes a single conversational agent turn and processes response artifacts (images, TTS).
     """
@@ -567,7 +583,10 @@ async def execute_agent_turn(
         ))
 
     full_text = msg_text + pref_context if pref_context else msg_text
-    parts.append(types.Part.from_text(text=full_text))
+    if full_text:
+        parts.append(types.Part.from_text(text=full_text))
+    elif not parts:
+        parts.append(types.Part.from_text(text=" "))
 
     new_message = types.Content(role="user", parts=parts)
 
@@ -579,10 +598,11 @@ async def execute_agent_turn(
     )
 
     response_text = ""
+    active_runner = active_runner or runner
     async def _run_agent(is_retry=False):
         nonlocal response_text
         try:
-            async for event in runner.run_async(
+            async for event in active_runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
                 new_message=new_message,
@@ -974,13 +994,26 @@ async def on_message(message: discord.Message):
     user_id = str(message.author.id)
     session_id = f"discord_{message.channel.id}"
 
-    # Route to isolated image session if replying to a cached image
+    active_runner = runner
+    # Route to isolated session if replying to a cached message
     if message.reference and message.reference.resolved and isinstance(message.reference.resolved, discord.Message):
         ref_msg = message.reference.resolved
+        from bot.cache import get_image_metadata, get_text_metadata
         ref_meta = await get_image_metadata(str(ref_msg.id))
         if ref_meta and ref_meta.get("session_id"):
             session_id = ref_meta.get("session_id")
+            active_runner = art_director_runner
             logger.info("Routing reply to isolated image session: %s", session_id)
+        else:
+            text_meta = await get_text_metadata(str(ref_msg.id))
+            if text_meta:
+                agent_name = text_meta.get("agent_name")
+                if agent_name == "dj_agent":
+                    active_runner = dj_agent_runner
+                    logger.info("Routing reply directly to dj_agent")
+                elif agent_name == "art_director":
+                    active_runner = art_director_runner
+                    logger.info("Routing reply directly to art_director")
 
     if message.guild:
         from app.radio_state import register_channel_guild
@@ -1120,6 +1153,7 @@ async def on_message(message: discord.Message):
             session_id=session_id,
             message_reference=message,
             image_data=image_data,
+            active_runner=active_runner,
         )
     except Exception as e:
         logger.exception("Error running ADK agent:")
