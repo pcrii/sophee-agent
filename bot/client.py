@@ -260,7 +260,7 @@ def _guild_obj():
     return discord.Object(id=DISCORD_GUILD_ID) if DISCORD_GUILD_ID else None
 
 
-@tree.command(name="image_settings", description="View and configure image generation defaults", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else None)
+@tree.command(name="image_settings", description="View and configure image generation defaults", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else discord.utils.MISSING)
 async def cmd_image_settings(interaction: discord.Interaction):
     """Opens the image generation settings panel (ephemeral)."""
     user_id = str(interaction.user.id)
@@ -276,7 +276,7 @@ async def cmd_image_settings(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-@tree.command(name="llm_settings", description="Configure the general assistant's creativity and thinking level", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else None)
+@tree.command(name="llm_settings", description="Configure the general assistant's creativity and thinking level", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else discord.utils.MISSING)
 async def cmd_llm_settings(interaction: discord.Interaction):
     """Opens the LLM settings panel (ephemeral). Only affects the general conversational agent."""
     user_id = str(interaction.user.id)
@@ -290,7 +290,7 @@ async def cmd_llm_settings(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-@tree.context_menu(name="Debug LLM Generation", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else None)
+@tree.context_menu(name="Debug LLM Generation", guilds=[discord.Object(id=DISCORD_GUILD_ID)] if DISCORD_GUILD_ID else discord.utils.MISSING)
 async def context_debug_llm(interaction: discord.Interaction, message: discord.Message):
     """Context menu command to view LLM metadata for a message ephemerally."""
     if message.author.id != client.user.id:
