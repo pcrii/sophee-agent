@@ -362,8 +362,7 @@ async def execute_agent_turn(
     image_data=None,
     interaction=None,
 ):
-    """Executes a single conversational agent turn, processes response artifacts (images, TTS),
-    and displays RPG adventure stats/choices if an adventure is active.
+    """Executes a single conversational agent turn and processes response artifacts (images, TTS).
     """
     session = await get_or_create_session(user_id, session_id)
 
@@ -475,27 +474,6 @@ async def execute_agent_turn(
                     msg_text = f"[The user is replying to your earlier message starting with: \"{short_pointer}...\"]\n\n{msg_text}"
                 else:
                     msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
-
-    # Inject adventure state if active
-    is_adv_active = session and session.state.get("adventure_active")
-    if is_adv_active:
-        genre = session.state.get("genre", "Fantasy")
-        char = session.state.get("character_concept", "Traveler")
-        health = session.state.get("player_health", "100/100")
-        inv = ", ".join(session.state.get("inventory", [])) or "None"
-        quests = ", ".join(session.state.get("quest_log", [])) or "None"
-        tension = session.state.get("tension", 10)
-
-        state_info = (
-            f"\n\n[SYSTEM INFO: Active Adventure Thread]\n"
-            f"[Current Genre: {genre}]\n"
-            f"[Character Concept: {char}]\n"
-            f"[Player Health: {health}]\n"
-            f"[Inventory: {inv}]\n"
-            f"[Quest Log: {quests}]\n"
-            f"[Current Tension Level: {tension}/100]"
-        )
-        msg_text = msg_text + state_info
 
     # Process image attachments
     if image_data:
@@ -900,38 +878,6 @@ async def execute_agent_turn(
                 await send_message_in_chunks(channel, response_text)
         return
 
-    # Build adventure HUD / choices if active
-    if session and session.state.get("adventure_active"):
-        embed = discord.Embed(
-            title="📖 Dungeon Master's HUD",
-            color=discord.Color.dark_purple(),
-        )
-        embed.add_field(name="❤️ Health", value=session.state.get("player_health", "100/100"), inline=True)
-        embed.add_field(name="⚡ Tension", value=f"{session.state.get('tension', 10)}/100", inline=True)
-        
-        loc = session.state.get("location")
-        if loc:
-            embed.add_field(name="📍 Location", value=loc, inline=False)
-
-        inv_list = session.state.get("inventory", [])
-        embed.add_field(name="🎒 Inventory", value=", ".join(inv_list) if inv_list else "*Empty*", inline=False)
-
-        quests_list = session.state.get("quest_log", [])
-        embed.add_field(name="📜 Active Quests", value="\n".join(f"- {q}" for q in quests_list) if quests_list else "*None*", inline=False)
-
-        choices = session.state.get("choices", [])
-        if choices:
-            from bot.views import AdventureView
-            view = AdventureView(
-                choices=choices,
-                user_id=user_id,
-                session_id=session_id,
-                runner=runner,
-                artifact_service=artifact_service,
-                session_service=session_service,
-                update_state_fn=update_session_state,
-                process_adventure_turn_fn=execute_agent_turn,
-            )
 
     # Default: send text response
     if interaction:
@@ -961,22 +907,7 @@ async def on_message(message: discord.Message):
     # Check if bot is explicitly mentioned
     is_mentioned = client.user in message.mentions
 
-    # Bypassed mention/reply check if it is an active adventure thread
-    is_adventure_thread = False
-    if isinstance(message.channel, discord.Thread):
-        try:
-            temp_session = await session_service.get_session(
-                app_name=APP_NAME, user_id=str(message.author.id), session_id=f"discord_{message.channel.id}"
-            )
-            is_adventure_thread = (
-                temp_session 
-                and temp_session.state.get("adventure_active")
-                and message.channel.id in active_adventure_threads
-            )
-        except Exception:
-            pass
-
-    if not is_mentioned and not is_adventure_thread:
+    if not is_mentioned:
         return
 
     # Rate limiting
