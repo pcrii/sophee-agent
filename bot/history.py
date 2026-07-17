@@ -58,54 +58,5 @@ async def _db_trim_events(app_name: str, user_id: str, session_id: str, keep_lim
     await asyncio.to_thread(_run)
 
 
-async def sanitize_images_from_history(app_name: str, user_id: str, session_id: str):
-    """Aggressively scrubs base64 image payloads from the session history in the DB.
-    Replaces them with a text placeholder to preserve the flow of conversation
-    without costing thousands of tokens on every subsequent turn.
-    """
-    import json
-    def _run():
-        conn = sqlite3.connect(DB_PATH)
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, event_data FROM events WHERE app_name = ? AND user_id = ? AND session_id = ?",
-                (app_name, user_id, session_id)
-            )
-            rows = cursor.fetchall()
-            
-            for row_id, event_data_str in rows:
-                if "inline_data" not in event_data_str and "inlineData" not in event_data_str:
-                    continue
-                    
-                try:
-                    data = json.loads(event_data_str)
-                    modified = False
-                    
-                    if "content" in data and "parts" in data["content"]:
-                        for part in data["content"]["parts"]:
-                            if "inline_data" in part or "inlineData" in part:
-                                part.pop("inline_data", None)
-                                part.pop("inlineData", None)
-                                part["text"] = "[Image sanitized from history to save context budget]"
-                                modified = True
-                                
-                    if modified:
-                        cursor.execute(
-                            "UPDATE events SET event_data = ? WHERE id = ?",
-                            (json.dumps(data), row_id)
-                        )
-                except Exception:
-                    pass
-            conn.commit()
-        finally:
-            conn.close()
-    await asyncio.to_thread(_run)
 
-
-async def trim_session_history(session_service, app_name: str, user_id: str, session_id: str):
-    """No-op. Session history is managed server-side by the Gemini Interactions API.
-    Retention is determined by the Google AI Studio project settings (default 55 days).
-    """
-    pass
 
