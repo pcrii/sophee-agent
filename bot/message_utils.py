@@ -69,73 +69,7 @@ async def send_message_in_chunks(message, text, reference=None, is_thread=False,
 
 
 
-async def fetch_chunked_context(replied_message, time_threshold_seconds=5.0, max_chunks=5) -> str:
-    """Collects adjacent messages by the same author sent within a small time window to reconstruct chunked posts."""
-    author = replied_message.author
-    channel = replied_message.channel
 
-    chunks = [(replied_message.id, replied_message.created_at, replied_message.content)]
-
-    # Fetch messages before the replied message (older)
-    try:
-        async for msg in channel.history(limit=max_chunks, before=replied_message):
-            if msg.author == author:
-                prev_time = chunks[-1][1]
-                time_diff = abs((prev_time - msg.created_at).total_seconds())
-                if time_diff <= time_threshold_seconds:
-                    chunks.append((msg.id, msg.created_at, msg.content))
-                else:
-                    break
-    except Exception as e:
-        logger.error("Error fetching history before replied message: %s", e)
-
-    # Fetch messages after the replied message (newer)
-    chunks_after = []
-    try:
-        async for msg in channel.history(limit=max_chunks, after=replied_message):
-            if msg.author == author:
-                ref_time = chunks_after[-1][1] if chunks_after else replied_message.created_at
-                time_diff = abs((msg.created_at - ref_time).total_seconds())
-                if time_diff <= time_threshold_seconds:
-                    chunks_after.append((msg.id, msg.created_at, msg.content))
-                else:
-                    break
-    except Exception as e:
-        logger.error("Error fetching history after replied message: %s", e)
-
-    # Combine chronologically
-    all_chunks = list(reversed(chunks)) + chunks_after
-    return "\n".join([c[2] for c in all_chunks if c[2]])
-
-
-async def fetch_conversation_context(replied_message, current_message, max_gap_seconds=2400.0, limit=50) -> str:
-    """Collects all messages from the channel between replied_message and current_message.
-    Stops if there's a time gap larger than max_gap_seconds (default 40 mins).
-    """
-    channel = replied_message.channel
-
-    messages = [replied_message]
-
-    try:
-        # Fetch messages after the replied message up to the current_message
-        async for msg in channel.history(limit=limit, after=replied_message, before=current_message, oldest_first=True):
-            prev_time = messages[-1].created_at
-            time_diff = abs((msg.created_at - prev_time).total_seconds())
-            if time_diff > max_gap_seconds:
-                # Large gap detected. Stop accumulating to avoid grabbing a different conversation.
-                break
-            messages.append(msg)
-            
-    except Exception as e:
-        logger.error("Error fetching conversation history: %s", e)
-
-    # Format transcript
-    transcript = []
-    for m in messages:
-        if m.content:
-            transcript.append(f"[{m.author.display_name}]: {m.content}")
-
-    return "\n".join(transcript)
 
 
 async def read_image_attachment(attachment) -> dict | None:

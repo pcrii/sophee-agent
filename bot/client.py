@@ -25,8 +25,6 @@ from bot.cache import save_image_metadata, get_image_metadata
 from bot.history import _db_clear_events
 from bot.message_utils import (
     bracket_urls,
-    fetch_chunked_context,
-    fetch_conversation_context,
     read_image_attachment,
     send_message_in_chunks,
 )
@@ -480,24 +478,7 @@ async def execute_agent_turn(
     # Process message content
     msg_text = content
 
-    # Handle reply context reconstruction (both bot and user messages)
-    if message_reference and message_reference.reference and message_reference.reference.resolved and not is_image_reply:
-        replied_msg = message_reference.reference.resolved
-        
-        # Check if user wants the whole conversation starting from the reply
-        prompt_lower = msg_text.lower()
-        conv_keywords = ["this conversation", "this context", "the conversation", "these messages", "read above", "full context"]
-        
-        if any(kw in prompt_lower for kw in conv_keywords):
-            # Fetch full conversation up to current message
-            conv_context = await fetch_conversation_context(replied_msg, current_message=None)
-            if conv_context:
-                msg_text = f"[The user wants you to read the conversation starting from this message:\n---\n{conv_context}\n---\n]\n\n{msg_text}"
-        else:
-            # Grab the chunks of the single replied message as context
-            chunked_context = await fetch_chunked_context(replied_msg)
-            if chunked_context:
-                msg_text = f"[The user is replying to this message from {replied_msg.author.display_name}:\n---\n{chunked_context}\n---\n]\n\n{msg_text}"
+
 
     # Process image attachments
     if image_data:
@@ -521,35 +502,8 @@ async def execute_agent_turn(
     if state_updates:
         await update_session_state(user_id, session_id, state_updates)
 
-    # Build user preference context
-    user_prefs = session.state.get("user_prefs", {})
-    corrections = user_prefs.get("corrections", [])
-    pref_context = ""
+    full_text = msg_text
     
-    # Try reading from file first
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    file_path = os.path.join(project_root, "data", f"user_profile_{user_id}.txt")
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                pref_context = f.read()
-            logger.debug("Loaded user personalization from file: %s", file_path)
-        except Exception as e:
-            logger.warning("Error reading user personalization file: %s", e)
-            
-    # Fallback to database session state and heal the file if missing
-    if not pref_context and corrections:
-        prefs_str = "\n".join(f"- {c}" for c in corrections)
-        pref_context = f"\n\n[USER PREFERENCES for this user:\n{prefs_str}]"
-        # Recreate the file to heal it
-        try:
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(pref_context)
-            logger.info("Healed/recreated user personalization file: %s", file_path)
-        except Exception as e:
-            logger.warning("Failed to recreate user personalization file: %s", e)
-
     # Build the message parts
     parts = []
     if image_data:
@@ -558,7 +512,6 @@ async def execute_agent_turn(
             mime_type=image_data["mime_type"],
         ))
 
-    full_text = msg_text + pref_context if pref_context else msg_text
     if full_text:
         parts.append(types.Part.from_text(text=full_text))
     elif not parts:
