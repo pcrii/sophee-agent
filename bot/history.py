@@ -105,7 +105,7 @@ async def sanitize_images_from_history(app_name: str, user_id: str, session_id: 
 
 async def trim_session_history(session_service, app_name: str, user_id: str, session_id: str):
     """Trims conversation history to the most recent MAX_HISTORY_TURNS exchanges,
-    and flushes history entirely if the session has been inactive for more than 4 hours.
+    and flushes history entirely if the session has been inactive for more than 7 days.
 
     Only conversation events are trimmed — session.state (radio queue, preferences,
     image settings, etc.) is unaffected.
@@ -117,7 +117,7 @@ async def trim_session_history(session_service, app_name: str, user_id: str, ses
         if not session:
             return
 
-        # Check for 4-hour inactivity flush (14400 seconds)
+        # Check for 7-day inactivity flush (604800 seconds)
         now = time.time()
         
         # Aggressively scrub base64 image data from the ADK SQLite history database
@@ -131,7 +131,7 @@ async def trim_session_history(session_service, app_name: str, user_id: str, ses
             last_activity_time = session.events[-1].timestamp
             
         time_inactive = now - last_activity_time
-        if last_activity_time > 0 and time_inactive > 14400:
+        if last_activity_time > 0 and time_inactive > 604800:
             trimmed_count = len(session.events)
             session.events = []
             
@@ -144,8 +144,8 @@ async def trim_session_history(session_service, app_name: str, user_id: str, ses
 
             await _db_clear_events(app_name, user_id, session_id)
             logger.info(
-                "Flushed all %d history events from session %s due to inactivity (inactive for %.1fh)",
-                trimmed_count, session_id, time_inactive / 3600.0
+                "Flushed all %d history events from session %s due to inactivity (inactive for %.1fd)",
+                trimmed_count, session_id, time_inactive / 86400.0
             )
             return
 

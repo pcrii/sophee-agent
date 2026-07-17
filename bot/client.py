@@ -413,7 +413,7 @@ async def execute_agent_turn(
     # Trim history before running agent
     await trim_session_history(session_service, APP_NAME, user_id, session_id)
 
-    # Auto-restore reference image from artifact if session state lost it (4hr wipe / restart)
+    # Auto-restore reference image from artifact if session state lost it (7-day wipe / restart)
     try:
         from bot.artifact_helpers import restore_reference_image_to_session
         await restore_reference_image_to_session(user_id, session_id)
