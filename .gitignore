@@ -30,3 +30,6 @@ headers_auth.json
 oauth.json
 headers_auth_min.json
 browser.json
+
+# Agents
+.agents/
