@@ -742,7 +742,7 @@ async def execute_agent_turn(
             style=session.state.get("rolled_style") if session else None,
             resolution=session.state.get("latest_resolution", "0.5k") if session else "0.5k",
             image_artifact=new_image_key,
-            parent_image_artifact=session.state.get("latest_input_image_artifact") if session else None,
+            parent_image_artifact=session.state.get("last_used_reference_artifact") if session else None,
             session_id=image_session_id,
         )
         

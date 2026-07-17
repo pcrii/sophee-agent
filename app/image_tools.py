@@ -297,6 +297,9 @@ async def gemini_generate_image(
             except Exception as save_err:
                 logger.error("Failed to save artifact %s: %s", artifact_name, save_err)
 
+            # Store what reference was used for THIS generation before we overwrite it
+            tool_context.state["last_used_reference_artifact"] = tool_context.state.get("latest_input_image_artifact")
+            
             # Set the newly generated image as the current reference canvas
             # via artifact reference (not base64 — keeps state lightweight)
             tool_context.state["latest_input_image_artifact"] = artifact_name
