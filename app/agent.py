@@ -261,7 +261,6 @@ art_director = Agent(
         show_image_settings,
         set_image_defaults,
         custom_google_search,
-        *_user_tools,
     ],
 )
 
@@ -310,6 +309,7 @@ general_assistant = Agent(
     description="A clean, helpful, and unbiased conversational assistant for general questions, chit-chat, Q&A, writing, and coding.",
     instruction=_load_prompt("general_assistant"),
     before_model_callback=apply_llm_settings_callback,
+    sub_agents=[art_director],
     tools=[
         custom_google_search,
         fetch_google_news,
@@ -329,7 +329,7 @@ root_agent = Agent(
     name="root_agent",
     model=model_config,
     instruction=_load_prompt("root_agent"),
-    sub_agents=[dj_agent, art_director, general_assistant],
+    sub_agents=[dj_agent, general_assistant],
 )
 
 

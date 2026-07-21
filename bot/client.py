@@ -77,13 +77,7 @@ runner = Runner(
     artifact_service=artifact_service,
 )
 
-from app.agent import art_director, dj_agent
-art_director_runner = Runner(
-    agent=art_director,
-    app_name=APP_NAME,
-    session_service=session_service,
-    artifact_service=artifact_service,
-)
+from app.agent import dj_agent
 
 dj_agent_runner = Runner(
     agent=dj_agent,
@@ -905,7 +899,6 @@ async def on_message(message: discord.Message):
         ref_meta = await get_image_metadata(str(ref_msg.id))
         if ref_meta and ref_meta.get("session_id"):
             session_id = ref_meta.get("session_id")
-            active_runner = art_director_runner
             logger.info("Routing reply to isolated image session: %s", session_id)
         else:
             text_meta = await get_text_metadata(str(ref_msg.id))
@@ -917,9 +910,6 @@ async def on_message(message: discord.Message):
                 if agent_name == "dj_agent":
                     active_runner = dj_agent_runner
                     logger.info("Routing reply directly to dj_agent")
-                elif agent_name == "art_director":
-                    active_runner = art_director_runner
-                    logger.info("Routing reply directly to art_director")
 
     if message.guild:
         from app.radio_state import register_channel_guild
